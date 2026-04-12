@@ -19,7 +19,7 @@ def _resolve_client_id(x_api_key: str | None, settings: Settings) -> str | None:
     if settings.gateway_api_key and x_api_key == settings.gateway_api_key:
         return 'default'
     if not settings.gateway_api_key and not settings.gateway_api_keys:
-        return 'anonymous'
+        return 'default'
     return None
 
 
@@ -30,7 +30,8 @@ async def require_gateway_api_key(
     client_id = _resolve_client_id(x_api_key, settings)
     if client_id is None:
         raise HTTPException(status_code=401, detail='invalid or missing api key')
-    if x_api_key and not rate_limiter.allow(x_api_key, settings.rate_limit_requests, settings.rate_limit_window_seconds):
+    limiter_key = x_api_key or client_id
+    if not rate_limiter.allow(limiter_key, settings.rate_limit_requests, settings.rate_limit_window_seconds):
         raise HTTPException(status_code=429, detail='rate limit exceeded')
     metrics_registry.record_client_request(client_id)
     return client_id

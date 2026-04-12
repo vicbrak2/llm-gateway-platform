@@ -12,9 +12,10 @@ from redis.asyncio import Redis
 
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, trace_id_ctx
-from app.schemas import ChatRequest, ChatResponse, ErrorResponse, HealthResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
+from app.schemas import ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ErrorResponse, HealthResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
 from app.services.auth import require_gateway_api_key
 from app.services.cache import CacheService
+from app.services.client_policy_service import ClientPolicyService
 from app.services.errors import build_error_response
 from app.services.health import build_health_response
 from app.services.metrics import metrics_registry
@@ -39,7 +40,7 @@ async def lifespan(app: FastAPI):
         await redis_client.aclose()
 
 
-app = FastAPI(title='LLM Orchestrator', version='0.8.0', lifespan=lifespan)
+app = FastAPI(title='LLM Orchestrator', version='0.9.0', lifespan=lifespan)
 
 
 @app.middleware('http')
@@ -71,6 +72,10 @@ def build_orchestrator(settings: Settings = Depends(get_settings), secret_resolv
     return OrchestratorService(settings, cache, n8n_client, secret_resolver)
 
 
+def build_client_policy_service() -> ClientPolicyService:
+    return ClientPolicyService()
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     trace_id = request.headers.get('x-trace-id') or trace_id_ctx.get()
@@ -96,11 +101,22 @@ async def metrics(_: str = Depends(require_gateway_api_key)) -> MetricsResponse:
     return metrics_registry.snapshot()
 
 
-@app.post('/v1/chat/completions', response_model=ChatResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}, 500: {'model': ErrorResponse}})
-async def chat_completions(request: ChatRequest, orchestrator: OrchestratorService = Depends(build_orchestrator), x_trace_id: str | None = Header(default=None), _: str = Depends(require_gateway_api_key)) -> ChatResponse:
+@app.get('/admin/clients', response_model=ClientPolicyListResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def list_clients(_: str = Depends(require_gateway_api_key), service: ClientPolicyService = Depends(build_client_policy_service)) -> ClientPolicyListResponse:
+    return ClientPolicyListResponse(items=service.list_policies())
+
+
+@app.post('/admin/clients', response_model=ClientPolicy, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def upsert_client(policy: ClientPolicy, _: str = Depends(require_gateway_api_key), service: ClientPolicyService = Depends(build_client_policy_service)) -> ClientPolicy:
+    return service.upsert_policy(policy)
+
+
+@app.post('/v1/chat/completions', response_model=ChatResponse, responses={401: {'model': ErrorResponse}, 403: {'model': ErrorResponse}, 413: {'model': ErrorResponse}, 429: {'model': ErrorResponse}, 500: {'model': ErrorResponse}})
+async def chat_completions(request: ChatRequest, orchestrator: OrchestratorService = Depends(build_orchestrator), policy_service: ClientPolicyService = Depends(build_client_policy_service), x_trace_id: str | None = Header(default=None), client_id: str = Depends(require_gateway_api_key)) -> ChatResponse:
     trace_id = request.trace_id or x_trace_id or str(uuid.uuid4())
     trace_id_ctx.set(trace_id)
-    logger.info('chat request received', extra={'extra_data': {'trace_id': trace_id, 'strategy': request.strategy}})
+    logger.info('chat request received', extra={'extra_data': {'trace_id': trace_id, 'strategy': request.strategy, 'client_id': client_id}})
+    request = policy_service.enforce_chat_policy(client_id, request)
     return await orchestrator.run(request, trace_id)
 
 

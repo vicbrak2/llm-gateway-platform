@@ -84,6 +84,24 @@ class MetricsResponse(BaseModel):
     client_usage: list[ClientUsage] = Field(default_factory=list)
 
 
+class ClientPolicy(BaseModel):
+    client_id: str
+    enabled: bool = True
+    plan: str = 'starter'
+    default_strategy: Literal['fast', 'balanced', 'quality'] = 'balanced'
+    allowed_strategies: list[Literal['fast', 'balanced', 'quality']] = Field(default_factory=lambda: ['fast', 'balanced', 'quality'])
+    allowed_response_formats: list[Literal['text', 'json_object']] = Field(default_factory=lambda: ['text', 'json_object'])
+    max_requests_per_minute: int = 60
+    max_parallel_providers: int = 3
+    allow_workflows: bool = True
+    preferred_providers: list[str] = Field(default_factory=list)
+    max_input_chars: int = 12000
+
+
+class ClientPolicyListResponse(BaseModel):
+    items: list[ClientPolicy] = Field(default_factory=list)
+
+
 class HealthResponse(BaseModel):
     status: Literal['ok', 'degraded']
     app: str

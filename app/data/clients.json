@@ -1,0 +1,15 @@
+[
+  {
+    "client_id": "default",
+    "enabled": true,
+    "plan": "starter",
+    "default_strategy": "balanced",
+    "allowed_strategies": ["fast", "balanced", "quality"],
+    "allowed_response_formats": ["text", "json_object"],
+    "max_requests_per_minute": 60,
+    "max_parallel_providers": 3,
+    "allow_workflows": true,
+    "preferred_providers": [],
+    "max_input_chars": 12000
+  }
+]
