@@ -7,8 +7,6 @@
   "temperature": 0.2,
   "max_tokens": 300,
   "user_id": "demo-user",
-  "context": {
-    "source": "example"
-  },
+  "context": {"source": "example"},
   "require_workflow": false
 }

@@ -6,13 +6,13 @@ from pydantic import BaseModel, Field
 
 
 class ChatMessage(BaseModel):
-    role: Literal["system", "user", "assistant", "tool"]
+    role: Literal['system', 'user', 'assistant', 'tool']
     content: str
 
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
-    strategy: Literal["fast", "balanced", "quality"] = "balanced"
+    strategy: Literal['fast', 'balanced', 'quality'] = 'balanced'
     temperature: float = 0.2
     max_tokens: int = 512
     user_id: str | None = None
@@ -40,10 +40,28 @@ class ChatResponse(BaseModel):
     workflow_invoked: bool = False
 
 
+class BreakerStatus(BaseModel):
+    provider: str
+    state: Literal['closed', 'open']
+    failure_count: int
+    opened_until: float
+
+
+class ProviderHealth(BaseModel):
+    provider: str
+    model: str
+    priority: int
+    timeout_seconds: float
+
+
 class HealthResponse(BaseModel):
-    status: Literal["ok"] = "ok"
+    status: Literal['ok', 'degraded']
     app: str
     env: str
+    redis: Literal['connected', 'disabled', 'degraded']
+    n8n: Literal['configured', 'disabled']
+    providers: list[ProviderHealth] = Field(default_factory=list)
+    breakers: list[BreakerStatus] = Field(default_factory=list)
 
 
 class N8NWorkflowRequest(BaseModel):

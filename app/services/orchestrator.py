@@ -19,10 +19,7 @@ class OrchestratorService:
         self.n8n_client = n8n_client
         self.secret_resolver = secret_resolver
         self.provider_registry = ProviderRegistry(settings, secret_resolver)
-        self.routing_policy = RoutingPolicy(
-            max_parallel_providers=settings.max_parallel_providers,
-            complexity_threshold=settings.n8n_complexity_threshold,
-        )
+        self.routing_policy = RoutingPolicy(max_parallel_providers=settings.max_parallel_providers, complexity_threshold=settings.n8n_complexity_threshold)
 
     def _build_providers(self) -> list[OpenAICompatibleProvider]:
         return self.provider_registry.available_providers()
@@ -31,55 +28,30 @@ class OrchestratorService:
         return self.routing_policy.select_providers(providers, request)
 
     async def run(self, request: ChatRequest, trace_id: str) -> ChatResponse:
-        cache_key = self.cache.make_key(
-            {
-                "messages": [m.model_dump() for m in request.messages],
-                "strategy": request.strategy,
-                "temperature": request.temperature,
-                "max_tokens": request.max_tokens,
-            }
-        )
+        cache_key = self.cache.make_key({'messages': [m.model_dump() for m in request.messages], 'strategy': request.strategy, 'temperature': request.temperature, 'max_tokens': request.max_tokens})
         cached = await self.cache.get(cache_key)
         if cached:
             return ChatResponse(**cached)
-
         providers = self._select_providers(self._build_providers(), request)
         if not providers:
-            return ChatResponse(trace_id=trace_id, strategy=request.strategy, content="No provider is configured.", provider_results=[])
-
+            return ChatResponse(trace_id=trace_id, strategy=request.strategy, content='No provider is configured.', provider_results=[])
         messages = [m.model_dump() for m in request.messages]
         provider_results = await self._execute_strategy(providers, request.strategy, messages, request.temperature, request.max_tokens)
         content, winner = self._refine(provider_results)
-
         workflow_invoked = False
         if request.require_workflow or self._looks_complex(messages):
             if self.n8n_client.enabled:
                 workflow_invoked = True
                 try:
-                    await self.n8n_client.trigger_webhook("llm-complex-task", {"messages": messages, "trace_id": trace_id}, trace_id)
+                    await self.n8n_client.trigger_webhook('llm-complex-task', {'messages': messages, 'trace_id': trace_id}, trace_id)
                 except Exception:
                     workflow_invoked = False
-
-        response = ChatResponse(
-            trace_id=trace_id,
-            strategy=request.strategy,
-            winner=winner,
-            content=content,
-            provider_results=provider_results,
-            workflow_invoked=workflow_invoked,
-        )
+        response = ChatResponse(trace_id=trace_id, strategy=request.strategy, winner=winner, content=content, provider_results=provider_results, workflow_invoked=workflow_invoked)
         await self.cache.set(cache_key, response.model_dump())
         return response
 
-    async def _execute_strategy(
-        self,
-        providers: list[OpenAICompatibleProvider],
-        strategy: str,
-        messages: list[dict[str, str]],
-        temperature: float,
-        max_tokens: int,
-    ) -> list[ProviderResult]:
-        if strategy == "fast":
+    async def _execute_strategy(self, providers: list[OpenAICompatibleProvider], strategy: str, messages: list[dict[str, str]], temperature: float, max_tokens: int) -> list[ProviderResult]:
+        if strategy == 'fast':
             tasks = [asyncio.create_task(p.chat(messages, temperature, max_tokens)) for p in providers]
             results: list[ProviderResult] = []
             try:
@@ -96,7 +68,6 @@ class OrchestratorService:
                     if not task.done():
                         task.cancel()
             return sorted(results, key=lambda r: (not r.success, r.latency_ms))
-
         results = await asyncio.gather(*(p.chat(messages, temperature, max_tokens) for p in providers))
         return sorted(results, key=lambda r: (not r.success, r.latency_ms))
 
@@ -104,19 +75,16 @@ class OrchestratorService:
         successes = [r for r in provider_results if r.success and r.content.strip()]
         if not successes:
             first = provider_results[0] if provider_results else None
-            return (first.error if first and first.error else "No provider succeeded.", None)
-
-        if self.settings.refinement_strategy in {"none", "first_success"}:
+            return (first.error if first and first.error else 'No provider succeeded.', None)
+        if self.settings.refinement_strategy in {'none', 'first_success'}:
             winner = successes[0]
             return winner.content, winner.provider
-
         winner = successes[0]
         if len(successes) == 1:
             return winner.content, winner.provider
-
-        merged = "\n\n---\n\n".join([f"[{r.provider}]\n{r.content}" for r in successes])
+        merged = '\n\n---\n\n'.join([f'[{r.provider}]\n{r.content}' for r in successes])
         return merged, winner.provider
 
     def _looks_complex(self, messages: list[dict[str, str]]) -> bool:
-        total_len = sum(len(m.get("content", "")) for m in messages)
+        total_len = sum(len(m.get('content', '')) for m in messages)
         return total_len >= self.settings.n8n_complexity_threshold

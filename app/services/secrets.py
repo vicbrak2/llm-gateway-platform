@@ -4,15 +4,7 @@ import os
 
 
 class SecretResolver:
-    def __init__(
-        self,
-        infisical_enabled: bool = False,
-        host: str | None = None,
-        token: str | None = None,
-        project_id: str | None = None,
-        environment_slug: str | None = None,
-        secret_path: str | None = None,
-    ) -> None:
+    def __init__(self, infisical_enabled: bool = False, host: str | None = None, token: str | None = None, project_id: str | None = None, environment_slug: str | None = None, secret_path: str | None = None) -> None:
         self.infisical_enabled = infisical_enabled
         self.host = host
         self.token = token
@@ -34,21 +26,13 @@ class SecretResolver:
             from infisical_sdk import InfisicalSDKClient
         except Exception:
             return None
-
         if not all([self.host, self.token, self.project_id, self.environment_slug]):
             return None
-
         if self._client is None:
             self._client = InfisicalSDKClient(host=self.host)
             self._client.auth.universal_auth.login(client_secret=self.token)
-
         try:
-            secret = self._client.secrets.get_by_name(
-                secret_name=name,
-                project_id=self.project_id,
-                environment_slug=self.environment_slug,
-                secret_path=self.secret_path or "/",
-            )
-            return getattr(secret, "secretValue", None)
+            secret = self._client.secrets.get_by_name(secret_name=name, project_id=self.project_id, environment_slug=self.environment_slug, secret_path=self.secret_path or '/')
+            return getattr(secret, 'secretValue', None)
         except Exception:
             return None

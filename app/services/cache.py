@@ -15,8 +15,8 @@ class CacheService:
     @staticmethod
     def make_key(payload: dict[str, Any]) -> str:
         canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        return f"llm_orch:{digest}"
+        digest = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+        return f'llm_orch:{digest}'
 
     async def get(self, key: str) -> dict[str, Any] | None:
         if not self.redis:
