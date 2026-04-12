@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     redis_url: str | None = None
     cache_ttl_seconds: int = 300
+    gateway_api_key: str | None = None
 
     groq_enabled: bool = False
     groq_api_key: str | None = None

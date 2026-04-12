@@ -13,6 +13,7 @@ from redis.asyncio import Redis
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, trace_id_ctx
 from app.schemas import ChatRequest, ChatResponse, ErrorResponse, HealthResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
+from app.services.auth import require_gateway_api_key
 from app.services.cache import CacheService
 from app.services.errors import build_error_response
 from app.services.health import build_health_response
@@ -38,7 +39,7 @@ async def lifespan(app: FastAPI):
         await redis_client.aclose()
 
 
-app = FastAPI(title='LLM Orchestrator', version='0.5.0', lifespan=lifespan)
+app = FastAPI(title='LLM Orchestrator', version='0.6.0', lifespan=lifespan)
 
 
 @app.middleware('http')
@@ -90,21 +91,21 @@ async def health(settings: Settings = Depends(get_settings), secret_resolver: Se
     return await build_health_response(settings, redis_client, secret_resolver)
 
 
-@app.get('/metrics', response_model=MetricsResponse)
-async def metrics() -> MetricsResponse:
+@app.get('/metrics', response_model=MetricsResponse, responses={401: {'model': ErrorResponse}})
+async def metrics(_: None = Depends(require_gateway_api_key)) -> MetricsResponse:
     return metrics_registry.snapshot()
 
 
-@app.post('/v1/chat/completions', response_model=ChatResponse, responses={500: {'model': ErrorResponse}})
-async def chat_completions(request: ChatRequest, orchestrator: OrchestratorService = Depends(build_orchestrator), x_trace_id: str | None = Header(default=None)) -> ChatResponse:
+@app.post('/v1/chat/completions', response_model=ChatResponse, responses={401: {'model': ErrorResponse}, 500: {'model': ErrorResponse}})
+async def chat_completions(request: ChatRequest, orchestrator: OrchestratorService = Depends(build_orchestrator), x_trace_id: str | None = Header(default=None), _: None = Depends(require_gateway_api_key)) -> ChatResponse:
     trace_id = request.trace_id or x_trace_id or str(uuid.uuid4())
     trace_id_ctx.set(trace_id)
     logger.info('chat request received', extra={'extra_data': {'trace_id': trace_id, 'strategy': request.strategy}})
     return await orchestrator.run(request, trace_id)
 
 
-@app.post('/v1/workflows/trigger', response_model=N8NWorkflowResponse, responses={400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}})
-async def trigger_workflow(request: N8NWorkflowRequest, settings: Settings = Depends(get_settings), x_trace_id: str | None = Header(default=None)) -> N8NWorkflowResponse:
+@app.post('/v1/workflows/trigger', response_model=N8NWorkflowResponse, responses={400: {'model': ErrorResponse}, 401: {'model': ErrorResponse}, 500: {'model': ErrorResponse}})
+async def trigger_workflow(request: N8NWorkflowRequest, settings: Settings = Depends(get_settings), x_trace_id: str | None = Header(default=None), _: None = Depends(require_gateway_api_key)) -> N8NWorkflowResponse:
     trace_id = x_trace_id or str(uuid.uuid4())
     trace_id_ctx.set(trace_id)
     client = N8NClient(settings.n8n_base_url, settings.n8n_api_key, settings.n8n_timeout_seconds)
