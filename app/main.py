@@ -12,11 +12,12 @@ from redis.asyncio import Redis
 
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, trace_id_ctx
-from app.schemas import ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ErrorResponse, HealthResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
+from app.schemas import ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ErrorResponse, GatewayApiKey, GatewayApiKeyListResponse, HealthResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
 from app.services.auth import require_gateway_api_key
 from app.services.cache import CacheService
 from app.services.client_policy_service import ClientPolicyService
 from app.services.errors import build_error_response
+from app.services.gateway_api_key_repository import GatewayApiKeyRepository
 from app.services.health import build_health_response
 from app.services.metrics import metrics_registry
 from app.services.n8n import N8NClient
@@ -35,12 +36,13 @@ async def lifespan(app: FastAPI):
     if settings.redis_url:
         redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
         await redis_client.ping()
+    GatewayApiKeyRepository()
     yield
     if redis_client:
         await redis_client.aclose()
 
 
-app = FastAPI(title='LLM Orchestrator', version='0.10.0', lifespan=lifespan)
+app = FastAPI(title='LLM Orchestrator', version='0.11.0', lifespan=lifespan)
 
 
 @app.middleware('http')
@@ -76,6 +78,10 @@ def build_client_policy_service() -> ClientPolicyService:
     return ClientPolicyService()
 
 
+def build_api_key_repository() -> GatewayApiKeyRepository:
+    return GatewayApiKeyRepository()
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     trace_id = request.headers.get('x-trace-id') or trace_id_ctx.get()
@@ -109,6 +115,23 @@ async def list_clients(_: str = Depends(require_gateway_api_key), service: Clien
 @app.post('/admin/clients', response_model=ClientPolicy, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
 async def upsert_client(policy: ClientPolicy, _: str = Depends(require_gateway_api_key), service: ClientPolicyService = Depends(build_client_policy_service)) -> ClientPolicy:
     return service.upsert_policy(policy)
+
+
+@app.get('/admin/api-keys', response_model=GatewayApiKeyListResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def list_api_keys(_: str = Depends(require_gateway_api_key), repository: GatewayApiKeyRepository = Depends(build_api_key_repository)) -> GatewayApiKeyListResponse:
+    return GatewayApiKeyListResponse(items=repository.list_keys())
+
+
+@app.post('/admin/api-keys', response_model=GatewayApiKey, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def create_api_key(payload: GatewayApiKey, _: str = Depends(require_gateway_api_key), repository: GatewayApiKeyRepository = Depends(build_api_key_repository)) -> GatewayApiKey:
+    return repository.create_key(client_id=payload.client_id, api_key=payload.api_key)
+
+
+@app.post('/admin/api-keys/{key_id}/revoke', responses={401: {'model': ErrorResponse}, 404: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def revoke_api_key(key_id: str, _: str = Depends(require_gateway_api_key), repository: GatewayApiKeyRepository = Depends(build_api_key_repository)) -> dict:
+    if not repository.revoke_key(key_id):
+        raise HTTPException(status_code=404, detail='api key not found')
+    return {'status': 'revoked', 'key_id': key_id}
 
 
 @app.post('/v1/chat/completions', response_model=ChatResponse, responses={401: {'model': ErrorResponse}, 403: {'model': ErrorResponse}, 413: {'model': ErrorResponse}, 429: {'model': ErrorResponse}, 500: {'model': ErrorResponse}})

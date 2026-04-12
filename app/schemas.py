@@ -71,6 +71,17 @@ class ClientUsage(BaseModel):
     requests_total: int
 
 
+class GatewayApiKey(BaseModel):
+    client_id: str
+    key_id: str
+    api_key: str
+    enabled: bool = True
+
+
+class GatewayApiKeyListResponse(BaseModel):
+    items: list[GatewayApiKey] = Field(default_factory=list)
+
+
 class MetricsResponse(BaseModel):
     requests_total: int
     request_errors_total: int

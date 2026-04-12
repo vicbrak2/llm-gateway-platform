@@ -3,11 +3,16 @@ from __future__ import annotations
 from fastapi import Header, HTTPException
 
 from app.core.config import Settings, get_settings
+from app.services.gateway_api_key_repository import GatewayApiKeyRepository
 from app.services.metrics import metrics_registry
 from app.services.rate_limiter import rate_limiter
 
 
 def _resolve_client_id(x_api_key: str | None, settings: Settings) -> str | None:
+    if x_api_key:
+        db_client_id = GatewayApiKeyRepository().resolve_client_id(x_api_key)
+        if db_client_id:
+            return db_client_id
     if settings.gateway_api_keys:
         pairs = [item.strip() for item in settings.gateway_api_keys.split(',') if item.strip()]
         mapping: dict[str, str] = {}

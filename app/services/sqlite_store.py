@@ -44,6 +44,16 @@ class SQLiteStore:
                 )
                 '''
             )
+            conn.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS gateway_api_keys (
+                    key_id TEXT PRIMARY KEY,
+                    client_id TEXT NOT NULL,
+                    api_key TEXT NOT NULL UNIQUE,
+                    enabled INTEGER NOT NULL
+                )
+                '''
+            )
             count = conn.execute('SELECT COUNT(*) AS total FROM client_policies').fetchone()['total']
             if count == 0:
                 conn.execute(
