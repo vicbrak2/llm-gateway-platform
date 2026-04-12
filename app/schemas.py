@@ -28,17 +28,6 @@ class CapabilityRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
-class CapabilityResponse(BaseModel):
-    capability: Literal['summarize', 'extract', 'generate_json', 'route_workflow']
-    trace_id: str
-    strategy: str
-    winner: str | None = None
-    content: str
-    provider_results: list['ProviderResult']
-    workflow_invoked: bool = False
-    structured_output_valid: bool | None = None
-
-
 class ProviderResult(BaseModel):
     provider: str
     model: str
@@ -47,6 +36,17 @@ class ProviderResult(BaseModel):
     success: bool
     status_code: int | None = None
     error: str | None = None
+
+
+class CapabilityResponse(BaseModel):
+    capability: Literal['summarize', 'extract', 'generate_json', 'route_workflow']
+    trace_id: str
+    strategy: str
+    winner: str | None = None
+    content: str
+    provider_results: list[ProviderResult]
+    workflow_invoked: bool = False
+    structured_output_valid: bool | None = None
 
 
 class ChatResponse(BaseModel):
@@ -86,6 +86,24 @@ class ErrorResponse(BaseModel):
 class ClientUsage(BaseModel):
     client_id: str
     requests_total: int
+
+
+class UsageByCapability(BaseModel):
+    client_id: str
+    capability: str
+    requests_total: int
+
+
+class UsageByDay(BaseModel):
+    client_id: str
+    usage_date: str
+    requests_total: int
+
+
+class BillingSummaryResponse(BaseModel):
+    total_usage: list[ClientUsage] = Field(default_factory=list)
+    usage_by_capability: list[UsageByCapability] = Field(default_factory=list)
+    usage_by_day: list[UsageByDay] = Field(default_factory=list)
 
 
 class GatewayApiKey(BaseModel):

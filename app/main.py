@@ -12,7 +12,7 @@ from redis.asyncio import Redis
 
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, trace_id_ctx
-from app.schemas import CapabilityRequest, CapabilityResponse, ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ErrorResponse, GatewayApiKey, GatewayApiKeyListResponse, HealthResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
+from app.schemas import BillingSummaryResponse, CapabilityRequest, CapabilityResponse, ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ErrorResponse, GatewayApiKey, GatewayApiKeyListResponse, HealthResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
 from app.services.auth import require_gateway_api_key
 from app.services.cache import CacheService
 from app.services.client_policy_service import ClientPolicyService
@@ -23,6 +23,7 @@ from app.services.metrics import metrics_registry
 from app.services.n8n import N8NClient
 from app.services.orchestrator import OrchestratorService
 from app.services.secrets import SecretResolver
+from app.services.usage_repository import UsageRepository
 
 logger = logging.getLogger(__name__)
 redis_client: Redis | None = None
@@ -42,7 +43,7 @@ async def lifespan(app: FastAPI):
         await redis_client.aclose()
 
 
-app = FastAPI(title='LLM Orchestrator', version='0.12.0', lifespan=lifespan)
+app = FastAPI(title='LLM Orchestrator', version='0.13.0', lifespan=lifespan)
 
 
 @app.middleware('http')
@@ -82,6 +83,10 @@ def build_api_key_repository() -> GatewayApiKeyRepository:
     return GatewayApiKeyRepository()
 
 
+def build_usage_repository() -> UsageRepository:
+    return UsageRepository()
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     trace_id = request.headers.get('x-trace-id') or trace_id_ctx.get()
@@ -105,6 +110,11 @@ async def health(settings: Settings = Depends(get_settings), secret_resolver: Se
 @app.get('/metrics', response_model=MetricsResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
 async def metrics(_: str = Depends(require_gateway_api_key)) -> MetricsResponse:
     return metrics_registry.snapshot()
+
+
+@app.get('/admin/billing/summary', response_model=BillingSummaryResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def billing_summary(_: str = Depends(require_gateway_api_key), usage_repository: UsageRepository = Depends(build_usage_repository)) -> BillingSummaryResponse:
+    return usage_repository.billing_summary()
 
 
 @app.get('/admin/clients', response_model=ClientPolicyListResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
@@ -140,6 +150,7 @@ async def run_capability(capability: str, request: CapabilityRequest, orchestrat
     trace_id_ctx.set(trace_id)
     chat_request, runtime_policy = policy_service.build_capability_request(client_id, capability, request)
     response = await orchestrator.run(chat_request, trace_id, runtime_policy)
+    metrics_registry.record_client_request(client_id, capability=capability)
     return CapabilityResponse(capability=capability, trace_id=response.trace_id, strategy=response.strategy, winner=response.winner, content=response.content, provider_results=response.provider_results, workflow_invoked=response.workflow_invoked, structured_output_valid=response.structured_output_valid)
 
 
@@ -149,17 +160,20 @@ async def chat_completions(request: ChatRequest, orchestrator: OrchestratorServi
     trace_id_ctx.set(trace_id)
     logger.info('chat request received', extra={'extra_data': {'trace_id': trace_id, 'strategy': request.strategy, 'client_id': client_id}})
     request, runtime_policy = policy_service.enforce_chat_policy(client_id, request)
-    return await orchestrator.run(request, trace_id, runtime_policy)
+    response = await orchestrator.run(request, trace_id, runtime_policy)
+    metrics_registry.record_client_request(client_id, capability='chat')
+    return response
 
 
 @app.post('/v1/workflows/trigger', response_model=N8NWorkflowResponse, responses={400: {'model': ErrorResponse}, 401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}, 500: {'model': ErrorResponse}})
-async def trigger_workflow(request: N8NWorkflowRequest, settings: Settings = Depends(get_settings), x_trace_id: str | None = Header(default=None), _: str = Depends(require_gateway_api_key)) -> N8NWorkflowResponse:
+async def trigger_workflow(request: N8NWorkflowRequest, settings: Settings = Depends(get_settings), x_trace_id: str | None = Header(default=None), client_id: str = Depends(require_gateway_api_key)) -> N8NWorkflowResponse:
     trace_id = x_trace_id or str(uuid.uuid4())
     trace_id_ctx.set(trace_id)
     client = N8NClient(settings.n8n_base_url, settings.n8n_api_key, settings.n8n_timeout_seconds)
     if not client.enabled:
         raise HTTPException(status_code=400, detail='n8n integration is not configured')
     status_code, data = await client.trigger_webhook(request.workflow_id, request.payload, trace_id)
+    metrics_registry.record_client_request(client_id, capability='workflow')
     return N8NWorkflowResponse(trace_id=trace_id, workflow_id=request.workflow_id, status_code=status_code, data=data)
 
 

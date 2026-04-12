@@ -50,6 +50,26 @@ class SQLiteStore:
             )
             conn.execute(
                 '''
+                CREATE TABLE IF NOT EXISTS client_usage_capability (
+                    client_id TEXT NOT NULL,
+                    capability TEXT NOT NULL,
+                    requests_total INTEGER NOT NULL,
+                    PRIMARY KEY (client_id, capability)
+                )
+                '''
+            )
+            conn.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS client_usage_daily (
+                    client_id TEXT NOT NULL,
+                    usage_date TEXT NOT NULL,
+                    requests_total INTEGER NOT NULL,
+                    PRIMARY KEY (client_id, usage_date)
+                )
+                '''
+            )
+            conn.execute(
+                '''
                 CREATE TABLE IF NOT EXISTS gateway_api_keys (
                     key_id TEXT PRIMARY KEY,
                     client_id TEXT NOT NULL,

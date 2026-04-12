@@ -31,8 +31,8 @@ class MetricsRegistry:
         if status_code >= 400:
             self.request_errors_total += 1
 
-    def record_client_request(self, client_id: str) -> None:
-        self.usage_repository.increment(client_id)
+    def record_client_request(self, client_id: str, capability: str | None = None) -> None:
+        self.usage_repository.increment(client_id=client_id, capability=capability)
 
     def record_cache_hit(self) -> None:
         self.cache_hits_total += 1
