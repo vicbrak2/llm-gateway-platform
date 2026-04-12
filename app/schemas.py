@@ -22,6 +22,23 @@ class ChatRequest(BaseModel):
     response_format: Literal['text', 'json_object'] = 'text'
 
 
+class CapabilityRequest(BaseModel):
+    input: str
+    trace_id: str | None = None
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class CapabilityResponse(BaseModel):
+    capability: Literal['summarize', 'extract', 'generate_json', 'route_workflow']
+    trace_id: str
+    strategy: str
+    winner: str | None = None
+    content: str
+    provider_results: list['ProviderResult']
+    workflow_invoked: bool = False
+    structured_output_valid: bool | None = None
+
+
 class ProviderResult(BaseModel):
     provider: str
     model: str
@@ -102,6 +119,7 @@ class ClientPolicy(BaseModel):
     default_strategy: Literal['fast', 'balanced', 'quality'] = 'balanced'
     allowed_strategies: list[Literal['fast', 'balanced', 'quality']] = Field(default_factory=lambda: ['fast', 'balanced', 'quality'])
     allowed_response_formats: list[Literal['text', 'json_object']] = Field(default_factory=lambda: ['text', 'json_object'])
+    allowed_capabilities: list[Literal['summarize', 'extract', 'generate_json', 'route_workflow']] = Field(default_factory=lambda: ['summarize', 'extract', 'generate_json', 'route_workflow'])
     max_requests_per_minute: int = 60
     max_parallel_providers: int = 3
     allow_workflows: bool = True

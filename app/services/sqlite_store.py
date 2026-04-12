@@ -28,6 +28,7 @@ class SQLiteStore:
                     default_strategy TEXT NOT NULL,
                     allowed_strategies TEXT NOT NULL,
                     allowed_response_formats TEXT NOT NULL,
+                    allowed_capabilities TEXT NOT NULL DEFAULT 'summarize,extract,generate_json,route_workflow',
                     max_requests_per_minute INTEGER NOT NULL,
                     max_parallel_providers INTEGER NOT NULL,
                     allow_workflows INTEGER NOT NULL,
@@ -36,6 +37,9 @@ class SQLiteStore:
                 )
                 '''
             )
+            columns = [row['name'] for row in conn.execute("PRAGMA table_info(client_policies)").fetchall()]
+            if 'allowed_capabilities' not in columns:
+                conn.execute("ALTER TABLE client_policies ADD COLUMN allowed_capabilities TEXT NOT NULL DEFAULT 'summarize,extract,generate_json,route_workflow'")
             conn.execute(
                 '''
                 CREATE TABLE IF NOT EXISTS client_usage (
@@ -60,10 +64,10 @@ class SQLiteStore:
                     '''
                     INSERT INTO client_policies (
                         client_id, enabled, plan, default_strategy, allowed_strategies,
-                        allowed_response_formats, max_requests_per_minute, max_parallel_providers,
+                        allowed_response_formats, allowed_capabilities, max_requests_per_minute, max_parallel_providers,
                         allow_workflows, preferred_providers, max_input_chars
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''',
-                    ('default', 1, 'starter', 'balanced', 'fast,balanced,quality', 'text,json_object', 60, 3, 1, '', 12000),
+                    ('default', 1, 'starter', 'balanced', 'fast,balanced,quality', 'text,json_object', 'summarize,extract,generate_json,route_workflow', 60, 3, 1, '', 12000),
                 )
             conn.commit()

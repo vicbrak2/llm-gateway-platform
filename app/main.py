@@ -12,7 +12,7 @@ from redis.asyncio import Redis
 
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, trace_id_ctx
-from app.schemas import ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ErrorResponse, GatewayApiKey, GatewayApiKeyListResponse, HealthResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
+from app.schemas import CapabilityRequest, CapabilityResponse, ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ErrorResponse, GatewayApiKey, GatewayApiKeyListResponse, HealthResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
 from app.services.auth import require_gateway_api_key
 from app.services.cache import CacheService
 from app.services.client_policy_service import ClientPolicyService
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
         await redis_client.aclose()
 
 
-app = FastAPI(title='LLM Orchestrator', version='0.11.0', lifespan=lifespan)
+app = FastAPI(title='LLM Orchestrator', version='0.12.0', lifespan=lifespan)
 
 
 @app.middleware('http')
@@ -132,6 +132,15 @@ async def revoke_api_key(key_id: str, _: str = Depends(require_gateway_api_key),
     if not repository.revoke_key(key_id):
         raise HTTPException(status_code=404, detail='api key not found')
     return {'status': 'revoked', 'key_id': key_id}
+
+
+@app.post('/v1/capabilities/{capability}', response_model=CapabilityResponse, responses={401: {'model': ErrorResponse}, 403: {'model': ErrorResponse}, 413: {'model': ErrorResponse}, 429: {'model': ErrorResponse}, 500: {'model': ErrorResponse}})
+async def run_capability(capability: str, request: CapabilityRequest, orchestrator: OrchestratorService = Depends(build_orchestrator), policy_service: ClientPolicyService = Depends(build_client_policy_service), x_trace_id: str | None = Header(default=None), client_id: str = Depends(require_gateway_api_key)) -> CapabilityResponse:
+    trace_id = request.trace_id or x_trace_id or str(uuid.uuid4())
+    trace_id_ctx.set(trace_id)
+    chat_request, runtime_policy = policy_service.build_capability_request(client_id, capability, request)
+    response = await orchestrator.run(chat_request, trace_id, runtime_policy)
+    return CapabilityResponse(capability=capability, trace_id=response.trace_id, strategy=response.strategy, winner=response.winner, content=response.content, provider_results=response.provider_results, workflow_invoked=response.workflow_invoked, structured_output_valid=response.structured_output_valid)
 
 
 @app.post('/v1/chat/completions', response_model=ChatResponse, responses={401: {'model': ErrorResponse}, 403: {'model': ErrorResponse}, 413: {'model': ErrorResponse}, 429: {'model': ErrorResponse}, 500: {'model': ErrorResponse}})

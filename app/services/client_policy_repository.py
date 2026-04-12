@@ -24,15 +24,16 @@ class ClientPolicyRepository:
                 '''
                 INSERT INTO client_policies (
                     client_id, enabled, plan, default_strategy, allowed_strategies,
-                    allowed_response_formats, max_requests_per_minute, max_parallel_providers,
+                    allowed_response_formats, allowed_capabilities, max_requests_per_minute, max_parallel_providers,
                     allow_workflows, preferred_providers, max_input_chars
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(client_id) DO UPDATE SET
                     enabled=excluded.enabled,
                     plan=excluded.plan,
                     default_strategy=excluded.default_strategy,
                     allowed_strategies=excluded.allowed_strategies,
                     allowed_response_formats=excluded.allowed_response_formats,
+                    allowed_capabilities=excluded.allowed_capabilities,
                     max_requests_per_minute=excluded.max_requests_per_minute,
                     max_parallel_providers=excluded.max_parallel_providers,
                     allow_workflows=excluded.allow_workflows,
@@ -46,6 +47,7 @@ class ClientPolicyRepository:
                     policy.default_strategy,
                     ','.join(policy.allowed_strategies),
                     ','.join(policy.allowed_response_formats),
+                    ','.join(policy.allowed_capabilities),
                     policy.max_requests_per_minute,
                     policy.max_parallel_providers,
                     1 if policy.allow_workflows else 0,
@@ -65,6 +67,7 @@ class ClientPolicyRepository:
             default_strategy=row['default_strategy'],
             allowed_strategies=[item for item in row['allowed_strategies'].split(',') if item],
             allowed_response_formats=[item for item in row['allowed_response_formats'].split(',') if item],
+            allowed_capabilities=[item for item in row['allowed_capabilities'].split(',') if item],
             max_requests_per_minute=row['max_requests_per_minute'],
             max_parallel_providers=row['max_parallel_providers'],
             allow_workflows=bool(row['allow_workflows']),

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
-from app.schemas import ChatRequest, ClientPolicy
+from app.schemas import CapabilityRequest, ChatMessage, ChatRequest, ClientPolicy
 from app.services.client_policy_repository import ClientPolicyRepository
 
 
@@ -38,6 +38,32 @@ class ClientPolicyService:
             'max_parallel_providers': policy.max_parallel_providers,
         }
         return adjusted_request, runtime_policy
+
+    def build_capability_request(self, client_id: str, capability: str, request: CapabilityRequest) -> tuple[ChatRequest, dict]:
+        policy = self.get_policy(client_id)
+        if capability not in policy.allowed_capabilities:
+            raise HTTPException(status_code=403, detail='capability not allowed for client')
+        capability_map = {
+            'summarize': {'strategy': policy.default_strategy, 'response_format': 'text', 'require_workflow': False, 'system': 'Summarize the user input clearly and concisely.'},
+            'extract': {'strategy': 'balanced', 'response_format': 'text', 'require_workflow': False, 'system': 'Extract the most relevant entities and facts from the user input.'},
+            'generate_json': {'strategy': 'quality', 'response_format': 'json_object', 'require_workflow': False, 'system': 'Return a structured JSON object for the user input.'},
+            'route_workflow': {'strategy': 'balanced', 'response_format': 'text', 'require_workflow': True, 'system': 'Prepare the request to be routed to a workflow and summarize the intended action.'},
+        }
+        if capability not in capability_map:
+            raise HTTPException(status_code=404, detail='capability not found')
+        config = capability_map[capability]
+        chat_request = ChatRequest(
+            messages=[
+                ChatMessage(role='system', content=config['system']),
+                ChatMessage(role='user', content=request.input),
+            ],
+            strategy=config['strategy'],
+            trace_id=request.trace_id,
+            context=request.context,
+            require_workflow=config['require_workflow'],
+            response_format=config['response_format'],
+        )
+        return self.enforce_chat_policy(client_id, chat_request)
 
     def list_policies(self) -> list[ClientPolicy]:
         return self.repository.list_policies()
