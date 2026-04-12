@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
         await redis_client.aclose()
 
 
-app = FastAPI(title="LLM Orchestrator", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="LLM Orchestrator", version="0.3.0", lifespan=lifespan)
 
 
 def build_orchestrator(settings: Settings = Depends(get_settings)) -> OrchestratorService:

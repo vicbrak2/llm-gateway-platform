@@ -26,6 +26,7 @@ class FakeProvider:
         self.result = result
         self.delay_seconds = delay_seconds
         self.calls = 0
+        self.config = type("Cfg", (), {"timeout_seconds": 1.0, "priority": 1, "name": result.provider})()
 
     async def chat(self, messages, temperature, max_tokens):
         self.calls += 1
@@ -58,6 +59,7 @@ def make_settings() -> Settings:
         openrouter_enabled=False,
         huggingface_enabled=False,
         n8n_base_url=None,
+        max_parallel_providers=3,
     )
 
 

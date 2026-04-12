@@ -12,6 +12,7 @@ Production-ready starter for a multi-provider LLM gateway on Railway.
 - Structured logging with trace IDs
 - Retries with exponential backoff
 - Simple circuit breaker per provider
+- Provider registry and routing policy separation
 - Railway-ready deployment files
 - GitHub Actions for compile and test checks
 
@@ -37,6 +38,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 ## Notes
 
-- `fast` now waits for the first **successful** provider instead of the first completed task.
+- `fast` waits for the first successful provider instead of the first completed task.
 - Provider failures are retried according to the settings in `.env.example`.
 - Circuit breaker state is kept in-process per provider.
+- Routing is now handled by a dedicated `RoutingPolicy` service.
