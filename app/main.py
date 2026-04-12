@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, trace_id_ctx
-from app.schemas import ChatRequest, ChatResponse, HealthResponse, N8NWorkflowRequest, N8NWorkflowResponse
+from app.schemas import ChatRequest, ChatResponse, ErrorResponse, HealthResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
 from app.services.cache import CacheService
+from app.services.errors import build_error_response
 from app.services.health import build_health_response
+from app.services.metrics import metrics_registry
 from app.services.n8n import N8NClient
 from app.services.orchestrator import OrchestratorService
 from app.services.secrets import SecretResolver
@@ -34,7 +38,19 @@ async def lifespan(app: FastAPI):
         await redis_client.aclose()
 
 
-app = FastAPI(title='LLM Orchestrator', version='0.4.0', lifespan=lifespan)
+app = FastAPI(title='LLM Orchestrator', version='0.5.0', lifespan=lifespan)
+
+
+@app.middleware('http')
+async def metrics_middleware(request: Request, call_next):
+    started = time.perf_counter()
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        metrics_registry.record_request(path=request.url.path, status_code=getattr(response, 'status_code', 500), latency_ms=latency_ms)
 
 
 def build_secret_resolver(settings: Settings = Depends(get_settings)) -> SecretResolver:
@@ -54,12 +70,32 @@ def build_orchestrator(settings: Settings = Depends(get_settings), secret_resolv
     return OrchestratorService(settings, cache, n8n_client, secret_resolver)
 
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    trace_id = request.headers.get('x-trace-id') or trace_id_ctx.get()
+    payload = build_error_response(code='http_error', message=str(exc.detail), trace_id=trace_id)
+    return JSONResponse(status_code=exc.status_code, content=payload.model_dump())
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    trace_id = request.headers.get('x-trace-id') or trace_id_ctx.get()
+    logger.exception('unhandled exception', extra={'extra_data': {'trace_id': trace_id}})
+    payload = build_error_response(code='internal_error', message='Internal server error', trace_id=trace_id)
+    return JSONResponse(status_code=500, content=payload.model_dump())
+
+
 @app.get('/health', response_model=HealthResponse)
 async def health(settings: Settings = Depends(get_settings), secret_resolver: SecretResolver = Depends(build_secret_resolver)) -> HealthResponse:
     return await build_health_response(settings, redis_client, secret_resolver)
 
 
-@app.post('/v1/chat/completions', response_model=ChatResponse)
+@app.get('/metrics', response_model=MetricsResponse)
+async def metrics() -> MetricsResponse:
+    return metrics_registry.snapshot()
+
+
+@app.post('/v1/chat/completions', response_model=ChatResponse, responses={500: {'model': ErrorResponse}})
 async def chat_completions(request: ChatRequest, orchestrator: OrchestratorService = Depends(build_orchestrator), x_trace_id: str | None = Header(default=None)) -> ChatResponse:
     trace_id = request.trace_id or x_trace_id or str(uuid.uuid4())
     trace_id_ctx.set(trace_id)
@@ -67,7 +103,7 @@ async def chat_completions(request: ChatRequest, orchestrator: OrchestratorServi
     return await orchestrator.run(request, trace_id)
 
 
-@app.post('/v1/workflows/trigger', response_model=N8NWorkflowResponse)
+@app.post('/v1/workflows/trigger', response_model=N8NWorkflowResponse, responses={400: {'model': ErrorResponse}, 500: {'model': ErrorResponse}})
 async def trigger_workflow(request: N8NWorkflowRequest, settings: Settings = Depends(get_settings), x_trace_id: str | None = Header(default=None)) -> N8NWorkflowResponse:
     trace_id = x_trace_id or str(uuid.uuid4())
     trace_id_ctx.set(trace_id)

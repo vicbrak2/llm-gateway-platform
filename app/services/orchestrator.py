@@ -5,6 +5,7 @@ import asyncio
 from app.core.config import Settings
 from app.schemas import ChatRequest, ChatResponse, ProviderResult
 from app.services.cache import CacheService
+from app.services.metrics import metrics_registry
 from app.services.n8n import N8NClient
 from app.services.provider_registry import ProviderRegistry
 from app.services.providers import OpenAICompatibleProvider
@@ -31,12 +32,15 @@ class OrchestratorService:
         cache_key = self.cache.make_key({'messages': [m.model_dump() for m in request.messages], 'strategy': request.strategy, 'temperature': request.temperature, 'max_tokens': request.max_tokens})
         cached = await self.cache.get(cache_key)
         if cached:
+            metrics_registry.record_cache_hit()
             return ChatResponse(**cached)
+        metrics_registry.record_cache_miss()
         providers = self._select_providers(self._build_providers(), request)
         if not providers:
             return ChatResponse(trace_id=trace_id, strategy=request.strategy, content='No provider is configured.', provider_results=[])
         messages = [m.model_dump() for m in request.messages]
         provider_results = await self._execute_strategy(providers, request.strategy, messages, request.temperature, request.max_tokens)
+        metrics_registry.record_provider_results(provider_results)
         content, winner = self._refine(provider_results)
         workflow_invoked = False
         if request.require_workflow or self._looks_complex(messages):

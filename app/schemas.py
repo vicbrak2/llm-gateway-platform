@@ -54,6 +54,28 @@ class ProviderHealth(BaseModel):
     timeout_seconds: float
 
 
+class ErrorDetail(BaseModel):
+    code: str
+    message: str
+    trace_id: str | None = None
+
+
+class ErrorResponse(BaseModel):
+    error: ErrorDetail
+
+
+class MetricsResponse(BaseModel):
+    requests_total: int
+    request_errors_total: int
+    chat_requests_total: int
+    workflow_requests_total: int
+    cache_hits_total: int
+    cache_misses_total: int
+    provider_success_total: int
+    provider_failure_total: int
+    average_request_latency_ms: int
+
+
 class HealthResponse(BaseModel):
     status: Literal['ok', 'degraded']
     app: str
