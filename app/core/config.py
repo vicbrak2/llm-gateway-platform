@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     redis_url: str | None = None
     cache_ttl_seconds: int = 300
+    sqlite_path: str = 'app/data/llm_gateway.db'
     gateway_api_key: str | None = None
     gateway_api_keys: str | None = None
     rate_limit_requests: int = 60

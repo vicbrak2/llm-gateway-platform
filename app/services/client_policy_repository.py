@@ -1,42 +1,73 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from app.schemas import ClientPolicy
+from app.services.sqlite_store import SQLiteStore
 
 
 class ClientPolicyRepository:
-    def __init__(self, path: str = 'app/data/clients.json') -> None:
-        self.path = Path(path)
+    def __init__(self, db_path: str | None = None) -> None:
+        self.store = SQLiteStore(db_path)
 
     def list_policies(self) -> list[ClientPolicy]:
-        return [ClientPolicy(**item) for item in self._read_raw()]
+        with self.store.connect() as conn:
+            rows = conn.execute('SELECT * FROM client_policies ORDER BY client_id').fetchall()
+        return [self._row_to_policy(row) for row in rows]
 
     def get_policy(self, client_id: str) -> ClientPolicy | None:
-        for item in self.list_policies():
-            if item.client_id == client_id:
-                return item
-        return None
+        with self.store.connect() as conn:
+            row = conn.execute('SELECT * FROM client_policies WHERE client_id = ?', (client_id,)).fetchone()
+        return self._row_to_policy(row) if row else None
 
     def upsert_policy(self, policy: ClientPolicy) -> ClientPolicy:
-        items = self._read_raw()
-        replaced = False
-        for index, item in enumerate(items):
-            if item.get('client_id') == policy.client_id:
-                items[index] = policy.model_dump()
-                replaced = True
-                break
-        if not replaced:
-            items.append(policy.model_dump())
-        self._write_raw(items)
+        with self.store.connect() as conn:
+            conn.execute(
+                '''
+                INSERT INTO client_policies (
+                    client_id, enabled, plan, default_strategy, allowed_strategies,
+                    allowed_response_formats, max_requests_per_minute, max_parallel_providers,
+                    allow_workflows, preferred_providers, max_input_chars
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(client_id) DO UPDATE SET
+                    enabled=excluded.enabled,
+                    plan=excluded.plan,
+                    default_strategy=excluded.default_strategy,
+                    allowed_strategies=excluded.allowed_strategies,
+                    allowed_response_formats=excluded.allowed_response_formats,
+                    max_requests_per_minute=excluded.max_requests_per_minute,
+                    max_parallel_providers=excluded.max_parallel_providers,
+                    allow_workflows=excluded.allow_workflows,
+                    preferred_providers=excluded.preferred_providers,
+                    max_input_chars=excluded.max_input_chars
+                ''',
+                (
+                    policy.client_id,
+                    1 if policy.enabled else 0,
+                    policy.plan,
+                    policy.default_strategy,
+                    ','.join(policy.allowed_strategies),
+                    ','.join(policy.allowed_response_formats),
+                    policy.max_requests_per_minute,
+                    policy.max_parallel_providers,
+                    1 if policy.allow_workflows else 0,
+                    ','.join(policy.preferred_providers),
+                    policy.max_input_chars,
+                ),
+            )
+            conn.commit()
         return policy
 
-    def _read_raw(self) -> list[dict]:
-        if not self.path.exists():
-            return []
-        return json.loads(self.path.read_text(encoding='utf-8'))
-
-    def _write_raw(self, items: list[dict]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding='utf-8')
+    @staticmethod
+    def _row_to_policy(row) -> ClientPolicy:
+        return ClientPolicy(
+            client_id=row['client_id'],
+            enabled=bool(row['enabled']),
+            plan=row['plan'],
+            default_strategy=row['default_strategy'],
+            allowed_strategies=[item for item in row['allowed_strategies'].split(',') if item],
+            allowed_response_formats=[item for item in row['allowed_response_formats'].split(',') if item],
+            max_requests_per_minute=row['max_requests_per_minute'],
+            max_parallel_providers=row['max_parallel_providers'],
+            allow_workflows=bool(row['allow_workflows']),
+            preferred_providers=[item for item in row['preferred_providers'].split(',') if item],
+            max_input_chars=row['max_input_chars'],
+        )

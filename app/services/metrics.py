@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from app.schemas import ClientUsage, MetricsResponse, ProviderResult
+from app.schemas import MetricsResponse, ProviderResult
+from app.services.usage_repository import UsageRepository
 
 
 @dataclass
@@ -16,7 +17,9 @@ class MetricsRegistry:
     provider_success_total: int = 0
     provider_failure_total: int = 0
     total_request_latency_ms: int = 0
-    client_usage: dict[str, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.usage_repository = UsageRepository()
 
     def record_request(self, path: str, status_code: int, latency_ms: int) -> None:
         self.requests_total += 1
@@ -29,7 +32,7 @@ class MetricsRegistry:
             self.request_errors_total += 1
 
     def record_client_request(self, client_id: str) -> None:
-        self.client_usage[client_id] = self.client_usage.get(client_id, 0) + 1
+        self.usage_repository.increment(client_id)
 
     def record_cache_hit(self) -> None:
         self.cache_hits_total += 1
@@ -46,7 +49,7 @@ class MetricsRegistry:
 
     def snapshot(self) -> MetricsResponse:
         avg = int(self.total_request_latency_ms / self.requests_total) if self.requests_total else 0
-        usage = [ClientUsage(client_id=k, requests_total=v) for k, v in sorted(self.client_usage.items())]
+        usage = self.usage_repository.list_usage()
         return MetricsResponse(
             requests_total=self.requests_total,
             request_errors_total=self.request_errors_total,
