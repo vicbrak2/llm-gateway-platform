@@ -9,6 +9,7 @@ from app.services.metrics import metrics_registry
 from app.services.n8n import N8NClient
 from app.services.provider_registry import ProviderRegistry
 from app.services.providers import OpenAICompatibleProvider
+from app.services.response_ranker import ResponseRanker
 from app.services.routing_policy import RoutingPolicy
 from app.services.secrets import SecretResolver
 
@@ -21,6 +22,7 @@ class OrchestratorService:
         self.secret_resolver = secret_resolver
         self.provider_registry = ProviderRegistry(settings, secret_resolver)
         self.routing_policy = RoutingPolicy(max_parallel_providers=settings.max_parallel_providers, complexity_threshold=settings.n8n_complexity_threshold)
+        self.response_ranker = ResponseRanker()
 
     def _build_providers(self) -> list[OpenAICompatibleProvider]:
         return self.provider_registry.available_providers()
@@ -66,27 +68,25 @@ class OrchestratorService:
                         for task in tasks:
                             if not task.done():
                                 task.cancel()
-                        return sorted(results, key=lambda r: (not r.success, r.latency_ms))
+                        return self.response_ranker.rank(results)
             finally:
                 for task in tasks:
                     if not task.done():
                         task.cancel()
-            return sorted(results, key=lambda r: (not r.success, r.latency_ms))
+            return self.response_ranker.rank(results)
         results = await asyncio.gather(*(p.chat(messages, temperature, max_tokens) for p in providers))
-        return sorted(results, key=lambda r: (not r.success, r.latency_ms))
+        return self.response_ranker.rank(results)
 
     def _refine(self, provider_results: list[ProviderResult]) -> tuple[str, str | None]:
-        successes = [r for r in provider_results if r.success and r.content.strip()]
-        if not successes:
-            first = provider_results[0] if provider_results else None
-            return (first.error if first and first.error else 'No provider succeeded.', None)
+        winner = self.response_ranker.choose_winner(provider_results)
+        if winner is None or not winner.success or not winner.content.strip():
+            return (winner.error if winner and winner.error else 'No provider succeeded.', None)
         if self.settings.refinement_strategy in {'none', 'first_success'}:
-            winner = successes[0]
             return winner.content, winner.provider
-        winner = successes[0]
+        successes = [r for r in provider_results if r.success and r.content.strip()]
         if len(successes) == 1:
             return winner.content, winner.provider
-        merged = '\n\n---\n\n'.join([f'[{r.provider}]\n{r.content}' for r in successes])
+        merged = self.response_ranker.merge_contents(successes)
         return merged, winner.provider
 
     def _looks_complex(self, messages: list[dict[str, str]]) -> bool:
