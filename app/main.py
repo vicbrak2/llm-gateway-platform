@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
         await redis_client.aclose()
 
 
-app = FastAPI(title='LLM Orchestrator', version='0.9.0', lifespan=lifespan)
+app = FastAPI(title='LLM Orchestrator', version='0.10.0', lifespan=lifespan)
 
 
 @app.middleware('http')
@@ -116,8 +116,8 @@ async def chat_completions(request: ChatRequest, orchestrator: OrchestratorServi
     trace_id = request.trace_id or x_trace_id or str(uuid.uuid4())
     trace_id_ctx.set(trace_id)
     logger.info('chat request received', extra={'extra_data': {'trace_id': trace_id, 'strategy': request.strategy, 'client_id': client_id}})
-    request = policy_service.enforce_chat_policy(client_id, request)
-    return await orchestrator.run(request, trace_id)
+    request, runtime_policy = policy_service.enforce_chat_policy(client_id, request)
+    return await orchestrator.run(request, trace_id, runtime_policy)
 
 
 @app.post('/v1/workflows/trigger', response_model=N8NWorkflowResponse, responses={400: {'model': ErrorResponse}, 401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}, 500: {'model': ErrorResponse}})

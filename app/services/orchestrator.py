@@ -26,20 +26,28 @@ class OrchestratorService:
         self.response_ranker = ResponseRanker()
         self.response_validator = ResponseValidator()
 
-    def _build_providers(self) -> list[OpenAICompatibleProvider]:
-        return self.provider_registry.available_providers()
+    def _build_providers(self, runtime_policy: dict | None = None) -> list[OpenAICompatibleProvider]:
+        providers = self.provider_registry.available_providers()
+        preferred = (runtime_policy or {}).get('preferred_providers') or []
+        if preferred:
+            providers = [provider for provider in providers if provider.config.name in preferred]
+        return providers
 
-    def _select_providers(self, providers: list[OpenAICompatibleProvider], request: ChatRequest) -> list[OpenAICompatibleProvider]:
-        return self.routing_policy.select_providers(providers, request)
+    def _select_providers(self, providers: list[OpenAICompatibleProvider], request: ChatRequest, runtime_policy: dict | None = None) -> list[OpenAICompatibleProvider]:
+        selected = self.routing_policy.select_providers(providers, request)
+        max_parallel = (runtime_policy or {}).get('max_parallel_providers')
+        if isinstance(max_parallel, int) and max_parallel > 0:
+            return selected[:max_parallel]
+        return selected
 
-    async def run(self, request: ChatRequest, trace_id: str) -> ChatResponse:
-        cache_key = self.cache.make_key({'messages': [m.model_dump() for m in request.messages], 'strategy': request.strategy, 'temperature': request.temperature, 'max_tokens': request.max_tokens, 'response_format': request.response_format})
+    async def run(self, request: ChatRequest, trace_id: str, runtime_policy: dict | None = None) -> ChatResponse:
+        cache_key = self.cache.make_key({'messages': [m.model_dump() for m in request.messages], 'strategy': request.strategy, 'temperature': request.temperature, 'max_tokens': request.max_tokens, 'response_format': request.response_format, 'runtime_policy': runtime_policy or {}})
         cached = await self.cache.get(cache_key)
         if cached:
             metrics_registry.record_cache_hit()
             return ChatResponse(**cached)
         metrics_registry.record_cache_miss()
-        providers = self._select_providers(self._build_providers(), request)
+        providers = self._select_providers(self._build_providers(runtime_policy), request, runtime_policy)
         if not providers:
             return ChatResponse(trace_id=trace_id, strategy=request.strategy, content='No provider is configured.', provider_results=[])
         messages = [m.model_dump() for m in request.messages]
