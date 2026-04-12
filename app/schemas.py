@@ -19,6 +19,7 @@ class ChatRequest(BaseModel):
     trace_id: str | None = None
     context: dict[str, Any] = Field(default_factory=dict)
     require_workflow: bool = False
+    response_format: Literal['text', 'json_object'] = 'text'
 
 
 class ProviderResult(BaseModel):
@@ -38,6 +39,7 @@ class ChatResponse(BaseModel):
     content: str
     provider_results: list[ProviderResult]
     workflow_invoked: bool = False
+    structured_output_valid: bool | None = None
 
 
 class BreakerStatus(BaseModel):

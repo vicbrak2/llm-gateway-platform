@@ -10,6 +10,7 @@ from app.services.n8n import N8NClient
 from app.services.provider_registry import ProviderRegistry
 from app.services.providers import OpenAICompatibleProvider
 from app.services.response_ranker import ResponseRanker
+from app.services.response_validator import ResponseValidator
 from app.services.routing_policy import RoutingPolicy
 from app.services.secrets import SecretResolver
 
@@ -23,6 +24,7 @@ class OrchestratorService:
         self.provider_registry = ProviderRegistry(settings, secret_resolver)
         self.routing_policy = RoutingPolicy(max_parallel_providers=settings.max_parallel_providers, complexity_threshold=settings.n8n_complexity_threshold)
         self.response_ranker = ResponseRanker()
+        self.response_validator = ResponseValidator()
 
     def _build_providers(self) -> list[OpenAICompatibleProvider]:
         return self.provider_registry.available_providers()
@@ -31,7 +33,7 @@ class OrchestratorService:
         return self.routing_policy.select_providers(providers, request)
 
     async def run(self, request: ChatRequest, trace_id: str) -> ChatResponse:
-        cache_key = self.cache.make_key({'messages': [m.model_dump() for m in request.messages], 'strategy': request.strategy, 'temperature': request.temperature, 'max_tokens': request.max_tokens})
+        cache_key = self.cache.make_key({'messages': [m.model_dump() for m in request.messages], 'strategy': request.strategy, 'temperature': request.temperature, 'max_tokens': request.max_tokens, 'response_format': request.response_format})
         cached = await self.cache.get(cache_key)
         if cached:
             metrics_registry.record_cache_hit()
@@ -44,6 +46,7 @@ class OrchestratorService:
         provider_results = await self._execute_strategy(providers, request.strategy, messages, request.temperature, request.max_tokens)
         metrics_registry.record_provider_results(provider_results)
         content, winner = self._refine(provider_results)
+        normalized_content, structured_output_valid = self.response_validator.validate(content, request.response_format)
         workflow_invoked = False
         if request.require_workflow or self._looks_complex(messages):
             if self.n8n_client.enabled:
@@ -52,7 +55,7 @@ class OrchestratorService:
                     await self.n8n_client.trigger_webhook('llm-complex-task', {'messages': messages, 'trace_id': trace_id}, trace_id)
                 except Exception:
                     workflow_invoked = False
-        response = ChatResponse(trace_id=trace_id, strategy=request.strategy, winner=winner, content=content, provider_results=provider_results, workflow_invoked=workflow_invoked)
+        response = ChatResponse(trace_id=trace_id, strategy=request.strategy, winner=winner, content=normalized_content, provider_results=provider_results, workflow_invoked=workflow_invoked, structured_output_valid=structured_output_valid)
         await self.cache.set(cache_key, response.model_dump())
         return response
 
