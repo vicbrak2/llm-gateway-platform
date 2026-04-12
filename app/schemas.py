@@ -66,6 +66,11 @@ class ErrorResponse(BaseModel):
     error: ErrorDetail
 
 
+class ClientUsage(BaseModel):
+    client_id: str
+    requests_total: int
+
+
 class MetricsResponse(BaseModel):
     requests_total: int
     request_errors_total: int
@@ -76,6 +81,7 @@ class MetricsResponse(BaseModel):
     provider_success_total: int
     provider_failure_total: int
     average_request_latency_ms: int
+    client_usage: list[ClientUsage] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):
