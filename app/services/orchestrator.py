@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 from app.core.config import Settings
 from app.schemas import ChatRequest, ChatResponse, ProviderResult
 from app.services.cache import CacheService
+from app.services.circuit_breaker import get_circuit_breaker
 from app.services.n8n import N8NClient
 from app.services.providers import OpenAICompatibleProvider, ProviderConfig
 from app.services.secrets import SecretResolver
@@ -66,7 +66,19 @@ class OrchestratorService:
             )
 
         providers.sort(key=lambda x: x.priority)
-        return [OpenAICompatibleProvider(cfg) for cfg in providers[: self.settings.max_parallel_providers]]
+        return [
+            OpenAICompatibleProvider(
+                cfg,
+                breaker=get_circuit_breaker(
+                    cfg.name,
+                    failure_threshold=self.settings.circuit_breaker_failure_threshold,
+                    recovery_timeout_seconds=self.settings.circuit_breaker_recovery_seconds,
+                ),
+                max_retries=self.settings.provider_max_retries,
+                backoff_seconds=self.settings.retry_backoff_seconds,
+            )
+            for cfg in providers[: self.settings.max_parallel_providers]
+        ]
 
     async def run(self, request: ChatRequest, trace_id: str) -> ChatResponse:
         cache_key = self.cache.make_key(
@@ -119,15 +131,23 @@ class OrchestratorService:
     ) -> list[ProviderResult]:
         if strategy == "fast":
             tasks = [asyncio.create_task(p.chat(messages, temperature, max_tokens)) for p in providers]
-            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-            return [task.result() for task in done if not task.cancelled()]
-
-        tasks = [p.chat(messages, temperature, max_tokens) for p in providers]
-        results = await asyncio.gather(*tasks)
-        if strategy == "balanced":
+            results: list[ProviderResult] = []
+            try:
+                for completed in asyncio.as_completed(tasks):
+                    result = await completed
+                    results.append(result)
+                    if result.success and result.content.strip():
+                        for task in tasks:
+                            if not task.done():
+                                task.cancel()
+                        return sorted(results, key=lambda r: (not r.success, r.latency_ms))
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
             return sorted(results, key=lambda r: (not r.success, r.latency_ms))
+
+        results = await asyncio.gather(*(p.chat(messages, temperature, max_tokens) for p in providers))
         return sorted(results, key=lambda r: (not r.success, r.latency_ms))
 
     def _refine(self, provider_results: list[ProviderResult]) -> tuple[str, str | None]:
@@ -136,11 +156,7 @@ class OrchestratorService:
             first = provider_results[0] if provider_results else None
             return (first.error if first and first.error else "No provider succeeded.", None)
 
-        if self.settings.refinement_strategy == "none":
-            winner = successes[0]
-            return winner.content, winner.provider
-
-        if self.settings.refinement_strategy == "first_success":
+        if self.settings.refinement_strategy in {"none", "first_success"}:
             winner = successes[0]
             return winner.content, winner.provider
 

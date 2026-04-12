@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, computed_field
+from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,7 +18,6 @@ class Settings(BaseSettings):
     redis_url: str | None = None
     cache_ttl_seconds: int = 300
 
-    # Provider defaults. These are generic OpenAI-compatible endpoints where possible.
     groq_enabled: bool = False
     groq_api_key: str | None = None
     groq_model: str = "llama-3.3-70b-versatile"
@@ -44,14 +43,16 @@ class Settings(BaseSettings):
 
     refinement_strategy: Literal["none", "first_success", "aggregate"] = "aggregate"
     max_parallel_providers: int = 3
+    provider_max_retries: int = 2
+    retry_backoff_seconds: float = 0.25
+    circuit_breaker_failure_threshold: int = 3
+    circuit_breaker_recovery_seconds: int = 30
 
-    # n8n integration
     n8n_base_url: str | None = None
     n8n_api_key: str | None = None
     n8n_timeout_seconds: float = 10.0
     n8n_complexity_threshold: int = 80
 
-    # Optional Infisical integration
     infisical_enabled: bool = False
     infisical_host: str = "https://app.infisical.com"
     infisical_token: str | None = None
