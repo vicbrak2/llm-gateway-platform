@@ -124,6 +124,8 @@ class MemoryEntry(BaseModel):
     confidence: float = 0.8
     is_active: bool = True
     updated_at: str
+    expires_at: str | None = None
+    archived_at: str | None = None
 
 
 class MemoryEntryUpsert(BaseModel):
@@ -136,10 +138,16 @@ class MemoryEntryUpsert(BaseModel):
     priority: int = 50
     confidence: float = 0.8
     is_active: bool = True
+    expires_at: str | None = None
 
 
 class MemoryListResponse(BaseModel):
     items: list[MemoryEntry] = Field(default_factory=list)
+
+
+class MemoryPruneResponse(BaseModel):
+    archived_count: int
+    deleted_count: int
 
 
 class ConversationSummary(BaseModel):

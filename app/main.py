@@ -12,7 +12,7 @@ from redis.asyncio import Redis
 
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, trace_id_ctx
-from app.schemas import BillingSummaryResponse, CapabilityRequest, CapabilityResponse, ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ConversationSummaryListResponse, ErrorResponse, GatewayApiKey, GatewayApiKeyListResponse, HealthResponse, MemoryEntry, MemoryEntryUpsert, MemoryExtractRequest, MemoryListResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
+from app.schemas import BillingSummaryResponse, CapabilityRequest, CapabilityResponse, ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ConversationSummaryListResponse, ErrorResponse, GatewayApiKey, GatewayApiKeyListResponse, HealthResponse, MemoryEntry, MemoryEntryUpsert, MemoryExtractRequest, MemoryListResponse, MemoryPruneResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
 from app.services.auth import require_gateway_api_key
 from app.services.cache import CacheService
 from app.services.client_policy_service import ClientPolicyService
@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
         await redis_client.aclose()
 
 
-app = FastAPI(title='LLM Orchestrator', version='0.15.0', lifespan=lifespan)
+app = FastAPI(title='LLM Orchestrator', version='0.16.0', lifespan=lifespan)
 
 
 @app.middleware('http')
@@ -124,13 +124,25 @@ async def billing_summary(_: str = Depends(require_gateway_api_key), usage_repos
 
 
 @app.get('/admin/memory/{client_id}', response_model=MemoryListResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
-async def list_memory(client_id: str, user_id: str | None = Query(default=None), _: str = Depends(require_gateway_api_key), memory_service: MemoryService = Depends(build_memory_service)) -> MemoryListResponse:
-    return MemoryListResponse(items=memory_service.list_entries(client_id, user_id=user_id))
+async def list_memory(client_id: str, user_id: str | None = Query(default=None), include_archived: bool = Query(default=False), _: str = Depends(require_gateway_api_key), memory_service: MemoryService = Depends(build_memory_service)) -> MemoryListResponse:
+    return MemoryListResponse(items=memory_service.list_entries(client_id, user_id=user_id, include_archived=include_archived))
 
 
 @app.post('/admin/memory', response_model=MemoryEntry, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
 async def upsert_memory(entry: MemoryEntryUpsert, _: str = Depends(require_gateway_api_key), memory_service: MemoryService = Depends(build_memory_service)) -> MemoryEntry:
     return memory_service.upsert_entry(entry)
+
+
+@app.post('/admin/memory/{memory_id}/archive', responses={401: {'model': ErrorResponse}, 404: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def archive_memory(memory_id: str, _: str = Depends(require_gateway_api_key), memory_service: MemoryService = Depends(build_memory_service)) -> dict:
+    if not memory_service.archive_entry(memory_id):
+        raise HTTPException(status_code=404, detail='memory not found')
+    return {'status': 'archived', 'memory_id': memory_id}
+
+
+@app.post('/admin/memory/prune', response_model=MemoryPruneResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def prune_memory(_: str = Depends(require_gateway_api_key), memory_service: MemoryService = Depends(build_memory_service)) -> MemoryPruneResponse:
+    return memory_service.prune_expired()
 
 
 @app.delete('/admin/memory/{memory_id}', responses={401: {'model': ErrorResponse}, 404: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})

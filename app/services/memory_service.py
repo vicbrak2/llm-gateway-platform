@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.schemas import ChatMessage, MemoryEntry, MemoryEntryUpsert
+from app.schemas import ChatMessage, MemoryEntry, MemoryEntryUpsert, MemoryPruneResponse
 from app.services.memory_repository import MemoryRepository
 
 
@@ -8,14 +8,21 @@ class MemoryService:
     def __init__(self, repository: MemoryRepository | None = None) -> None:
         self.repository = repository or MemoryRepository()
 
-    def list_entries(self, client_id: str, user_id: str | None = None) -> list[MemoryEntry]:
-        return self.repository.list_entries(client_id, user_id=user_id)
+    def list_entries(self, client_id: str, user_id: str | None = None, include_archived: bool = False) -> list[MemoryEntry]:
+        return self.repository.list_entries(client_id, user_id=user_id, include_archived=include_archived)
 
     def upsert_entry(self, entry: MemoryEntryUpsert) -> MemoryEntry:
         return self.repository.upsert_entry(entry)
 
+    def archive_entry(self, memory_id: str) -> bool:
+        return self.repository.archive_entry(memory_id)
+
     def delete_entry(self, memory_id: str) -> bool:
         return self.repository.delete_entry(memory_id)
+
+    def prune_expired(self) -> MemoryPruneResponse:
+        archived_count, deleted_count = self.repository.prune_expired()
+        return MemoryPruneResponse(archived_count=archived_count, deleted_count=deleted_count)
 
     def list_summaries(self, client_id: str, user_id: str | None = None) -> list:
         return self.repository.list_summaries(client_id, user_id=user_id)

@@ -90,13 +90,19 @@ class SQLiteStore:
                     priority INTEGER NOT NULL,
                     confidence REAL NOT NULL,
                     is_active INTEGER NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    expires_at TEXT,
+                    archived_at TEXT
                 )
                 '''
             )
             memory_columns = [row['name'] for row in conn.execute("PRAGMA table_info(memory_entries)").fetchall()]
             if 'user_id' not in memory_columns:
                 conn.execute("ALTER TABLE memory_entries ADD COLUMN user_id TEXT")
+            if 'expires_at' not in memory_columns:
+                conn.execute("ALTER TABLE memory_entries ADD COLUMN expires_at TEXT")
+            if 'archived_at' not in memory_columns:
+                conn.execute("ALTER TABLE memory_entries ADD COLUMN archived_at TEXT")
             conn.execute(
                 '''
                 CREATE TABLE IF NOT EXISTS conversation_summaries (
