@@ -24,9 +24,27 @@ class MemoryRepository:
             row = conn.execute('SELECT * FROM memory_entries WHERE memory_id = ?', (memory_id,)).fetchone()
         return self._row_to_entry(row) if row else None
 
+    def find_duplicate(self, client_id: str, user_id: str | None, entry_type: str, key: str) -> MemoryEntry | None:
+        with self.store.connect() as conn:
+            if user_id is None:
+                row = conn.execute(
+                    'SELECT * FROM memory_entries WHERE client_id = ? AND user_id IS NULL AND type = ? AND key = ? LIMIT 1',
+                    (client_id, entry_type, key),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    'SELECT * FROM memory_entries WHERE client_id = ? AND user_id = ? AND type = ? AND key = ? LIMIT 1',
+                    (client_id, user_id, entry_type, key),
+                ).fetchone()
+        return self._row_to_entry(row) if row else None
+
     def upsert_entry(self, entry: MemoryEntryUpsert) -> MemoryEntry:
-        memory_id = entry.memory_id or uuid.uuid4().hex
+        duplicate = self.find_duplicate(entry.client_id, entry.user_id, entry.type, entry.key)
+        memory_id = entry.memory_id or (duplicate.memory_id if duplicate else uuid.uuid4().hex)
         updated_at = datetime.now(timezone.utc).isoformat()
+        value = entry.value
+        if duplicate and duplicate.value.strip() != entry.value.strip() and entry.value.strip() not in duplicate.value:
+            value = f'{duplicate.value} | {entry.value}'
         with self.store.connect() as conn:
             conn.execute(
                 '''
@@ -43,10 +61,10 @@ class MemoryRepository:
                     is_active=excluded.is_active,
                     updated_at=excluded.updated_at
                 ''',
-                (memory_id, entry.client_id, entry.user_id, entry.type, entry.key, entry.value, entry.priority, entry.confidence, 1 if entry.is_active else 0, updated_at),
+                (memory_id, entry.client_id, entry.user_id, entry.type, entry.key, value, entry.priority, entry.confidence, 1 if entry.is_active else 0, updated_at),
             )
             conn.commit()
-        return MemoryEntry(memory_id=memory_id, client_id=entry.client_id, user_id=entry.user_id, type=entry.type, key=entry.key, value=entry.value, priority=entry.priority, confidence=entry.confidence, is_active=entry.is_active, updated_at=updated_at)
+        return MemoryEntry(memory_id=memory_id, client_id=entry.client_id, user_id=entry.user_id, type=entry.type, key=entry.key, value=value, priority=entry.priority, confidence=entry.confidence, is_active=entry.is_active, updated_at=updated_at)
 
     def delete_entry(self, memory_id: str) -> bool:
         with self.store.connect() as conn:
@@ -63,14 +81,14 @@ class MemoryRepository:
                     SELECT * FROM memory_entries
                     WHERE client_id = ? AND (user_id = ? OR user_id IS NULL) AND is_active = 1 AND (key LIKE ? OR value LIKE ?)
                     ORDER BY priority DESC, updated_at DESC
-                    LIMIT ?
+                    LIMIT 50
                     ''',
-                    (client_id, user_id, pattern, pattern, limit),
+                    (client_id, user_id, pattern, pattern),
                 ).fetchall()
                 if not rows:
                     rows = conn.execute(
-                        'SELECT * FROM memory_entries WHERE client_id = ? AND (user_id = ? OR user_id IS NULL) AND is_active = 1 ORDER BY priority DESC, updated_at DESC LIMIT ?',
-                        (client_id, user_id, limit),
+                        'SELECT * FROM memory_entries WHERE client_id = ? AND (user_id = ? OR user_id IS NULL) AND is_active = 1 ORDER BY priority DESC, updated_at DESC LIMIT 50',
+                        (client_id, user_id),
                     ).fetchall()
             else:
                 rows = conn.execute(
@@ -78,16 +96,16 @@ class MemoryRepository:
                     SELECT * FROM memory_entries
                     WHERE client_id = ? AND is_active = 1 AND (key LIKE ? OR value LIKE ?)
                     ORDER BY priority DESC, updated_at DESC
-                    LIMIT ?
+                    LIMIT 50
                     ''',
-                    (client_id, pattern, pattern, limit),
+                    (client_id, pattern, pattern),
                 ).fetchall()
                 if not rows:
                     rows = conn.execute(
-                        'SELECT * FROM memory_entries WHERE client_id = ? AND is_active = 1 ORDER BY priority DESC, updated_at DESC LIMIT ?',
-                        (client_id, limit),
+                        'SELECT * FROM memory_entries WHERE client_id = ? AND is_active = 1 ORDER BY priority DESC, updated_at DESC LIMIT 50',
+                        (client_id,),
                     ).fetchall()
-        return [self._row_to_entry(row) for row in rows]
+        return [self._row_to_entry(row) for row in rows[:limit]]
 
     def save_summary(self, client_id: str, summary: str, user_id: str | None = None) -> ConversationSummary:
         summary_id = uuid.uuid4().hex
