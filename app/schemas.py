@@ -113,6 +113,31 @@ class BillingSummaryResponse(BaseModel):
     usage_by_day: list[UsageByDay] = Field(default_factory=list)
 
 
+class PromptPolicy(BaseModel):
+    policy_id: str
+    client_id: str
+    capability: str | None = None
+    system_prompt: str
+    style_rules: str | None = None
+    content_rules: str | None = None
+    is_active: bool = True
+    updated_at: str
+
+
+class PromptPolicyUpsert(BaseModel):
+    policy_id: str | None = None
+    client_id: str
+    capability: str | None = None
+    system_prompt: str
+    style_rules: str | None = None
+    content_rules: str | None = None
+    is_active: bool = True
+
+
+class PromptPolicyListResponse(BaseModel):
+    items: list[PromptPolicy] = Field(default_factory=list)
+
+
 class MemoryEntry(BaseModel):
     memory_id: str
     client_id: str

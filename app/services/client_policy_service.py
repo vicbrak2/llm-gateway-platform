@@ -4,11 +4,13 @@ from fastapi import HTTPException
 
 from app.schemas import CapabilityRequest, ChatMessage, ChatRequest, ClientPolicy
 from app.services.client_policy_repository import ClientPolicyRepository
+from app.services.prompt_policy_service import PromptPolicyService
 
 
 class ClientPolicyService:
-    def __init__(self, repository: ClientPolicyRepository | None = None) -> None:
+    def __init__(self, repository: ClientPolicyRepository | None = None, prompt_policy_service: PromptPolicyService | None = None) -> None:
         self.repository = repository or ClientPolicyRepository()
+        self.prompt_policy_service = prompt_policy_service or PromptPolicyService()
 
     def get_policy(self, client_id: str) -> ClientPolicy:
         policy = self.repository.get_policy(client_id)
@@ -33,6 +35,7 @@ class ClientPolicyService:
         if total_chars > policy.max_input_chars:
             raise HTTPException(status_code=413, detail='input too large for client policy')
         adjusted_request = request.model_copy(update={'strategy': effective_strategy})
+        adjusted_request = self.prompt_policy_service.apply_policy(client_id, adjusted_request, capability=None)
         runtime_policy = {
             'preferred_providers': policy.preferred_providers,
             'max_parallel_providers': policy.max_parallel_providers,
@@ -63,7 +66,9 @@ class ClientPolicyService:
             require_workflow=config['require_workflow'],
             response_format=config['response_format'],
         )
-        return self.enforce_chat_policy(client_id, chat_request)
+        chat_request, runtime_policy = self.enforce_chat_policy(client_id, chat_request)
+        chat_request = self.prompt_policy_service.apply_policy(client_id, chat_request, capability=capability)
+        return chat_request, runtime_policy
 
     def list_policies(self) -> list[ClientPolicy]:
         return self.repository.list_policies()

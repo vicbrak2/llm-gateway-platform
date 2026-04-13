@@ -12,7 +12,7 @@ from redis.asyncio import Redis
 
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, trace_id_ctx
-from app.schemas import BillingSummaryResponse, CapabilityRequest, CapabilityResponse, ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ConversationSummaryListResponse, ErrorResponse, GatewayApiKey, GatewayApiKeyListResponse, HealthResponse, MemoryEntry, MemoryEntryUpsert, MemoryExtractRequest, MemoryListResponse, MemoryPruneResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
+from app.schemas import BillingSummaryResponse, CapabilityRequest, CapabilityResponse, ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ConversationSummaryListResponse, ErrorResponse, GatewayApiKey, GatewayApiKeyListResponse, HealthResponse, MemoryEntry, MemoryEntryUpsert, MemoryExtractRequest, MemoryListResponse, MemoryPruneResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse, PromptPolicy, PromptPolicyListResponse, PromptPolicyUpsert
 from app.services.auth import require_gateway_api_key
 from app.services.cache import CacheService
 from app.services.client_policy_service import ClientPolicyService
@@ -23,6 +23,7 @@ from app.services.memory_service import MemoryService
 from app.services.metrics import metrics_registry
 from app.services.n8n import N8NClient
 from app.services.orchestrator import OrchestratorService
+from app.services.prompt_policy_service import PromptPolicyService
 from app.services.secrets import SecretResolver
 from app.services.usage_repository import UsageRepository
 
@@ -40,12 +41,13 @@ async def lifespan(app: FastAPI):
         await redis_client.ping()
     GatewayApiKeyRepository()
     MemoryService()
+    PromptPolicyService()
     yield
     if redis_client:
         await redis_client.aclose()
 
 
-app = FastAPI(title='LLM Orchestrator', version='0.16.0', lifespan=lifespan)
+app = FastAPI(title='LLM Orchestrator', version='0.17.0', lifespan=lifespan)
 
 
 @app.middleware('http')
@@ -93,6 +95,10 @@ def build_memory_service() -> MemoryService:
     return MemoryService()
 
 
+def build_prompt_policy_service() -> PromptPolicyService:
+    return PromptPolicyService()
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     trace_id = request.headers.get('x-trace-id') or trace_id_ctx.get()
@@ -121,6 +127,16 @@ async def metrics(_: str = Depends(require_gateway_api_key)) -> MetricsResponse:
 @app.get('/admin/billing/summary', response_model=BillingSummaryResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
 async def billing_summary(_: str = Depends(require_gateway_api_key), usage_repository: UsageRepository = Depends(build_usage_repository)) -> BillingSummaryResponse:
     return usage_repository.billing_summary()
+
+
+@app.get('/admin/prompt-policies/{client_id}', response_model=PromptPolicyListResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def list_prompt_policies(client_id: str, _: str = Depends(require_gateway_api_key), prompt_policy_service: PromptPolicyService = Depends(build_prompt_policy_service)) -> PromptPolicyListResponse:
+    return PromptPolicyListResponse(items=prompt_policy_service.list_policies(client_id))
+
+
+@app.post('/admin/prompt-policies', response_model=PromptPolicy, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def upsert_prompt_policy(policy: PromptPolicyUpsert, _: str = Depends(require_gateway_api_key), prompt_policy_service: PromptPolicyService = Depends(build_prompt_policy_service)) -> PromptPolicy:
+    return prompt_policy_service.upsert_policy(policy)
 
 
 @app.get('/admin/memory/{client_id}', response_model=MemoryListResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})

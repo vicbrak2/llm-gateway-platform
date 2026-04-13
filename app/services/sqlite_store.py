@@ -80,6 +80,20 @@ class SQLiteStore:
             )
             conn.execute(
                 '''
+                CREATE TABLE IF NOT EXISTS prompt_policies (
+                    policy_id TEXT PRIMARY KEY,
+                    client_id TEXT NOT NULL,
+                    capability TEXT,
+                    system_prompt TEXT NOT NULL,
+                    style_rules TEXT,
+                    content_rules TEXT,
+                    is_active INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                '''
+            )
+            conn.execute(
+                '''
                 CREATE TABLE IF NOT EXISTS memory_entries (
                     memory_id TEXT PRIMARY KEY,
                     client_id TEXT NOT NULL,
