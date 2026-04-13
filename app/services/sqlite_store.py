@@ -83,6 +83,7 @@ class SQLiteStore:
                 CREATE TABLE IF NOT EXISTS memory_entries (
                     memory_id TEXT PRIMARY KEY,
                     client_id TEXT NOT NULL,
+                    user_id TEXT,
                     type TEXT NOT NULL,
                     key TEXT NOT NULL,
                     value TEXT NOT NULL,
@@ -93,16 +94,23 @@ class SQLiteStore:
                 )
                 '''
             )
+            memory_columns = [row['name'] for row in conn.execute("PRAGMA table_info(memory_entries)").fetchall()]
+            if 'user_id' not in memory_columns:
+                conn.execute("ALTER TABLE memory_entries ADD COLUMN user_id TEXT")
             conn.execute(
                 '''
                 CREATE TABLE IF NOT EXISTS conversation_summaries (
                     summary_id TEXT PRIMARY KEY,
                     client_id TEXT NOT NULL,
+                    user_id TEXT,
                     summary TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
                 '''
             )
+            summary_columns = [row['name'] for row in conn.execute("PRAGMA table_info(conversation_summaries)").fetchall()]
+            if 'user_id' not in summary_columns:
+                conn.execute("ALTER TABLE conversation_summaries ADD COLUMN user_id TEXT")
             count = conn.execute('SELECT COUNT(*) AS total FROM client_policies').fetchone()['total']
             if count == 0:
                 conn.execute(

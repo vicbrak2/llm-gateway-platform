@@ -24,12 +24,14 @@ class ChatRequest(BaseModel):
 
 class CapabilityRequest(BaseModel):
     input: str
+    user_id: str | None = None
     trace_id: str | None = None
     context: dict[str, Any] = Field(default_factory=dict)
 
 
 class MemoryExtractRequest(BaseModel):
     text: str
+    user_id: str | None = None
     trace_id: str | None = None
 
 
@@ -114,6 +116,7 @@ class BillingSummaryResponse(BaseModel):
 class MemoryEntry(BaseModel):
     memory_id: str
     client_id: str
+    user_id: str | None = None
     type: Literal['preference', 'fact', 'project_context', 'summary', 'custom']
     key: str
     value: str
@@ -126,6 +129,7 @@ class MemoryEntry(BaseModel):
 class MemoryEntryUpsert(BaseModel):
     memory_id: str | None = None
     client_id: str
+    user_id: str | None = None
     type: Literal['preference', 'fact', 'project_context', 'summary', 'custom']
     key: str
     value: str
@@ -141,6 +145,7 @@ class MemoryListResponse(BaseModel):
 class ConversationSummary(BaseModel):
     summary_id: str
     client_id: str
+    user_id: str | None = None
     summary: str
     updated_at: str
 
