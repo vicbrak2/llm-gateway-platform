@@ -28,6 +28,11 @@ class CapabilityRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
+class MemoryExtractRequest(BaseModel):
+    text: str
+    trace_id: str | None = None
+
+
 class ProviderResult(BaseModel):
     provider: str
     model: str
@@ -104,6 +109,44 @@ class BillingSummaryResponse(BaseModel):
     total_usage: list[ClientUsage] = Field(default_factory=list)
     usage_by_capability: list[UsageByCapability] = Field(default_factory=list)
     usage_by_day: list[UsageByDay] = Field(default_factory=list)
+
+
+class MemoryEntry(BaseModel):
+    memory_id: str
+    client_id: str
+    type: Literal['preference', 'fact', 'project_context', 'summary', 'custom']
+    key: str
+    value: str
+    priority: int = 50
+    confidence: float = 0.8
+    is_active: bool = True
+    updated_at: str
+
+
+class MemoryEntryUpsert(BaseModel):
+    memory_id: str | None = None
+    client_id: str
+    type: Literal['preference', 'fact', 'project_context', 'summary', 'custom']
+    key: str
+    value: str
+    priority: int = 50
+    confidence: float = 0.8
+    is_active: bool = True
+
+
+class MemoryListResponse(BaseModel):
+    items: list[MemoryEntry] = Field(default_factory=list)
+
+
+class ConversationSummary(BaseModel):
+    summary_id: str
+    client_id: str
+    summary: str
+    updated_at: str
+
+
+class ConversationSummaryListResponse(BaseModel):
+    items: list[ConversationSummary] = Field(default_factory=list)
 
 
 class GatewayApiKey(BaseModel):

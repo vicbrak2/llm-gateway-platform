@@ -12,13 +12,14 @@ from redis.asyncio import Redis
 
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, trace_id_ctx
-from app.schemas import BillingSummaryResponse, CapabilityRequest, CapabilityResponse, ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ErrorResponse, GatewayApiKey, GatewayApiKeyListResponse, HealthResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
+from app.schemas import BillingSummaryResponse, CapabilityRequest, CapabilityResponse, ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ConversationSummaryListResponse, ErrorResponse, GatewayApiKey, GatewayApiKeyListResponse, HealthResponse, MemoryEntry, MemoryEntryUpsert, MemoryExtractRequest, MemoryListResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse
 from app.services.auth import require_gateway_api_key
 from app.services.cache import CacheService
 from app.services.client_policy_service import ClientPolicyService
 from app.services.errors import build_error_response
 from app.services.gateway_api_key_repository import GatewayApiKeyRepository
 from app.services.health import build_health_response
+from app.services.memory_service import MemoryService
 from app.services.metrics import metrics_registry
 from app.services.n8n import N8NClient
 from app.services.orchestrator import OrchestratorService
@@ -38,12 +39,13 @@ async def lifespan(app: FastAPI):
         redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
         await redis_client.ping()
     GatewayApiKeyRepository()
+    MemoryService()
     yield
     if redis_client:
         await redis_client.aclose()
 
 
-app = FastAPI(title='LLM Orchestrator', version='0.13.0', lifespan=lifespan)
+app = FastAPI(title='LLM Orchestrator', version='0.14.0', lifespan=lifespan)
 
 
 @app.middleware('http')
@@ -87,6 +89,10 @@ def build_usage_repository() -> UsageRepository:
     return UsageRepository()
 
 
+def build_memory_service() -> MemoryService:
+    return MemoryService()
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     trace_id = request.headers.get('x-trace-id') or trace_id_ctx.get()
@@ -117,6 +123,33 @@ async def billing_summary(_: str = Depends(require_gateway_api_key), usage_repos
     return usage_repository.billing_summary()
 
 
+@app.get('/admin/memory/{client_id}', response_model=MemoryListResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def list_memory(client_id: str, _: str = Depends(require_gateway_api_key), memory_service: MemoryService = Depends(build_memory_service)) -> MemoryListResponse:
+    return MemoryListResponse(items=memory_service.list_entries(client_id))
+
+
+@app.post('/admin/memory', response_model=MemoryEntry, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def upsert_memory(entry: MemoryEntryUpsert, _: str = Depends(require_gateway_api_key), memory_service: MemoryService = Depends(build_memory_service)) -> MemoryEntry:
+    return memory_service.upsert_entry(entry)
+
+
+@app.delete('/admin/memory/{memory_id}', responses={401: {'model': ErrorResponse}, 404: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def delete_memory(memory_id: str, _: str = Depends(require_gateway_api_key), memory_service: MemoryService = Depends(build_memory_service)) -> dict:
+    if not memory_service.delete_entry(memory_id):
+        raise HTTPException(status_code=404, detail='memory not found')
+    return {'status': 'deleted', 'memory_id': memory_id}
+
+
+@app.get('/admin/memory/{client_id}/summaries', response_model=ConversationSummaryListResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def list_memory_summaries(client_id: str, _: str = Depends(require_gateway_api_key), memory_service: MemoryService = Depends(build_memory_service)) -> ConversationSummaryListResponse:
+    return ConversationSummaryListResponse(items=memory_service.list_summaries(client_id))
+
+
+@app.post('/v1/memory/extract', response_model=MemoryListResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def extract_memory(request: MemoryExtractRequest, client_id: str = Depends(require_gateway_api_key), memory_service: MemoryService = Depends(build_memory_service)) -> MemoryListResponse:
+    return MemoryListResponse(items=memory_service.extract_from_text(client_id, request.text))
+
+
 @app.get('/admin/clients', response_model=ClientPolicyListResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
 async def list_clients(_: str = Depends(require_gateway_api_key), service: ClientPolicyService = Depends(build_client_policy_service)) -> ClientPolicyListResponse:
     return ClientPolicyListResponse(items=service.list_policies())
@@ -145,22 +178,27 @@ async def revoke_api_key(key_id: str, _: str = Depends(require_gateway_api_key),
 
 
 @app.post('/v1/capabilities/{capability}', response_model=CapabilityResponse, responses={401: {'model': ErrorResponse}, 403: {'model': ErrorResponse}, 413: {'model': ErrorResponse}, 429: {'model': ErrorResponse}, 500: {'model': ErrorResponse}})
-async def run_capability(capability: str, request: CapabilityRequest, orchestrator: OrchestratorService = Depends(build_orchestrator), policy_service: ClientPolicyService = Depends(build_client_policy_service), x_trace_id: str | None = Header(default=None), client_id: str = Depends(require_gateway_api_key)) -> CapabilityResponse:
+async def run_capability(capability: str, request: CapabilityRequest, orchestrator: OrchestratorService = Depends(build_orchestrator), policy_service: ClientPolicyService = Depends(build_client_policy_service), memory_service: MemoryService = Depends(build_memory_service), x_trace_id: str | None = Header(default=None), client_id: str = Depends(require_gateway_api_key)) -> CapabilityResponse:
     trace_id = request.trace_id or x_trace_id or str(uuid.uuid4())
     trace_id_ctx.set(trace_id)
     chat_request, runtime_policy = policy_service.build_capability_request(client_id, capability, request)
-    response = await orchestrator.run(chat_request, trace_id, runtime_policy)
+    memory_context = memory_service.retrieve_context(client_id, chat_request.messages)
+    response = await orchestrator.run(chat_request, trace_id, runtime_policy, memory_context=memory_context)
     metrics_registry.record_client_request(client_id, capability=capability)
+    memory_service.process_interaction(client_id, request.input, response.content)
     return CapabilityResponse(capability=capability, trace_id=response.trace_id, strategy=response.strategy, winner=response.winner, content=response.content, provider_results=response.provider_results, workflow_invoked=response.workflow_invoked, structured_output_valid=response.structured_output_valid)
 
 
 @app.post('/v1/chat/completions', response_model=ChatResponse, responses={401: {'model': ErrorResponse}, 403: {'model': ErrorResponse}, 413: {'model': ErrorResponse}, 429: {'model': ErrorResponse}, 500: {'model': ErrorResponse}})
-async def chat_completions(request: ChatRequest, orchestrator: OrchestratorService = Depends(build_orchestrator), policy_service: ClientPolicyService = Depends(build_client_policy_service), x_trace_id: str | None = Header(default=None), client_id: str = Depends(require_gateway_api_key)) -> ChatResponse:
+async def chat_completions(request: ChatRequest, orchestrator: OrchestratorService = Depends(build_orchestrator), policy_service: ClientPolicyService = Depends(build_client_policy_service), memory_service: MemoryService = Depends(build_memory_service), x_trace_id: str | None = Header(default=None), client_id: str = Depends(require_gateway_api_key)) -> ChatResponse:
     trace_id = request.trace_id or x_trace_id or str(uuid.uuid4())
     trace_id_ctx.set(trace_id)
     logger.info('chat request received', extra={'extra_data': {'trace_id': trace_id, 'strategy': request.strategy, 'client_id': client_id}})
     request, runtime_policy = policy_service.enforce_chat_policy(client_id, request)
-    response = await orchestrator.run(request, trace_id, runtime_policy)
+    memory_context = memory_service.retrieve_context(client_id, request.messages)
+    response = await orchestrator.run(request, trace_id, runtime_policy, memory_context=memory_context)
+    user_text = ' '.join(message.content for message in request.messages if message.role == 'user')
+    memory_service.process_interaction(client_id, user_text, response.content)
     metrics_registry.record_client_request(client_id, capability='chat')
     return response
 

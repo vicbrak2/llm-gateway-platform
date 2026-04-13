@@ -40,8 +40,8 @@ class OrchestratorService:
             return selected[:max_parallel]
         return selected
 
-    async def run(self, request: ChatRequest, trace_id: str, runtime_policy: dict | None = None) -> ChatResponse:
-        cache_key = self.cache.make_key({'messages': [m.model_dump() for m in request.messages], 'strategy': request.strategy, 'temperature': request.temperature, 'max_tokens': request.max_tokens, 'response_format': request.response_format, 'runtime_policy': runtime_policy or {}})
+    async def run(self, request: ChatRequest, trace_id: str, runtime_policy: dict | None = None, memory_context: list[str] | None = None) -> ChatResponse:
+        cache_key = self.cache.make_key({'messages': [m.model_dump() for m in request.messages], 'strategy': request.strategy, 'temperature': request.temperature, 'max_tokens': request.max_tokens, 'response_format': request.response_format, 'runtime_policy': runtime_policy or {}, 'memory_context': memory_context or []})
         cached = await self.cache.get(cache_key)
         if cached:
             metrics_registry.record_cache_hit()
@@ -51,6 +51,9 @@ class OrchestratorService:
         if not providers:
             return ChatResponse(trace_id=trace_id, strategy=request.strategy, content='No provider is configured.', provider_results=[])
         messages = [m.model_dump() for m in request.messages]
+        if memory_context:
+            memory_block = '\n'.join(f'- {item}' for item in memory_context)
+            messages = [{'role': 'system', 'content': f'Relevant memory context:\n{memory_block}'}] + messages
         provider_results = await self._execute_strategy(providers, request.strategy, messages, request.temperature, request.max_tokens)
         metrics_registry.record_provider_results(provider_results)
         content, winner = self._refine(provider_results)

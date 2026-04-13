@@ -78,6 +78,31 @@ class SQLiteStore:
                 )
                 '''
             )
+            conn.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS memory_entries (
+                    memory_id TEXT PRIMARY KEY,
+                    client_id TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    priority INTEGER NOT NULL,
+                    confidence REAL NOT NULL,
+                    is_active INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                '''
+            )
+            conn.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS conversation_summaries (
+                    summary_id TEXT PRIMARY KEY,
+                    client_id TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                '''
+            )
             count = conn.execute('SELECT COUNT(*) AS total FROM client_policies').fetchone()['total']
             if count == 0:
                 conn.execute(
