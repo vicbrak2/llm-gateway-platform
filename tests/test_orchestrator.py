@@ -40,7 +40,7 @@ class TestOrchestrator(OrchestratorService):
         super().__init__(settings, cache, n8n_client, secret_resolver)
         self._providers = providers
 
-    def _build_providers(self):
+    def _build_providers(self, runtime_policy=None):
         return self._providers
 
 

@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
 from app.main import app
+from app.schemas import ClientPolicy
 from app.services.client_policy_repository import ClientPolicyRepository
 from app.services.rate_limiter import rate_limiter
 
@@ -11,19 +12,19 @@ def test_client_policy_blocks_disallowed_strategy() -> None:
     rate_limiter.reset()
     repo = ClientPolicyRepository()
     repo.upsert_policy(
-        {
-            'client_id': 'default',
-            'enabled': True,
-            'plan': 'starter',
-            'default_strategy': 'balanced',
-            'allowed_strategies': ['balanced'],
-            'allowed_response_formats': ['text'],
-            'max_requests_per_minute': 60,
-            'max_parallel_providers': 3,
-            'allow_workflows': False,
-            'preferred_providers': [],
-            'max_input_chars': 100,
-        }
+        ClientPolicy(
+            client_id='default',
+            enabled=True,
+            plan='starter',
+            default_strategy='balanced',
+            allowed_strategies=['balanced'],
+            allowed_response_formats=['text'],
+            max_requests_per_minute=60,
+            max_parallel_providers=3,
+            allow_workflows=False,
+            preferred_providers=[],
+            max_input_chars=100,
+        )
     )
     client = TestClient(app)
     settings = get_settings()
