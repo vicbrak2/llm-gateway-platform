@@ -7,12 +7,13 @@ import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, trace_id_ctx
-from app.schemas import BillingSummaryResponse, CapabilityRequest, CapabilityResponse, ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ConversationSummaryListResponse, ErrorResponse, GatewayApiKey, GatewayApiKeyListResponse, HealthResponse, MemoryEntry, MemoryEntryUpsert, MemoryExtractRequest, MemoryListResponse, MemoryPruneResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse, PromptPolicy, PromptPolicyListResponse, PromptPolicyUpsert
+from app.schemas import BillingSummaryResponse, CapabilityRequest, CapabilityResponse, ChatMessage, ChatRequest, ChatResponse, ClientPolicy, ClientPolicyListResponse, ConversationSummaryListResponse, ErrorResponse, GatewayApiKey, GatewayApiKeyListResponse, HealthResponse, MemoryEntry, MemoryEntryUpsert, MemoryExtractRequest, MemoryListResponse, MemoryPruneResponse, MetricsResponse, N8NWorkflowRequest, N8NWorkflowResponse, PromptPolicy, PromptPolicyListResponse, PromptPolicyUpsert, QueryRequest, QueryResponse, StatusResponse
 from app.services.auth import require_gateway_api_key
 from app.services.cache import CacheService
 from app.services.client_policy_service import ClientPolicyService
@@ -48,6 +49,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title='LLM Orchestrator', version='0.17.0', lifespan=lifespan)
+
+_cors_settings = get_settings()
+_allowed_origins = [o.strip() for o in _cors_settings.allowed_origins.split(',') if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins or ['*'],
+    allow_methods=['GET', 'POST', 'OPTIONS'],
+    allow_headers=['Authorization', 'X-API-Key', 'Content-Type', 'X-Trace-Id'],
+)
 
 
 @app.middleware('http')
@@ -117,6 +127,38 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 @app.get('/health', response_model=HealthResponse)
 async def health(settings: Settings = Depends(get_settings), secret_resolver: SecretResolver = Depends(build_secret_resolver)) -> HealthResponse:
     return await build_health_response(settings, redis_client, secret_resolver)
+
+
+@app.get('/status', response_model=StatusResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})
+async def status_check(
+    settings: Settings = Depends(get_settings),
+    secret_resolver: SecretResolver = Depends(build_secret_resolver),
+    _: str = Depends(require_gateway_api_key),
+) -> StatusResponse:
+    """Authenticated, minimal health summary for external clients (e.g. the brain-core skill)."""
+    health_response = await build_health_response(settings, redis_client, secret_resolver)
+    return StatusResponse(status=health_response.status, app=health_response.app, env=health_response.env)
+
+
+@app.post('/query', response_model=QueryResponse, responses={401: {'model': ErrorResponse}, 403: {'model': ErrorResponse}, 413: {'model': ErrorResponse}, 429: {'model': ErrorResponse}, 500: {'model': ErrorResponse}})
+async def query(
+    request: QueryRequest,
+    orchestrator: OrchestratorService = Depends(build_orchestrator),
+    policy_service: ClientPolicyService = Depends(build_client_policy_service),
+    memory_service: MemoryService = Depends(build_memory_service),
+    x_trace_id: str | None = Header(default=None),
+    client_id: str = Depends(require_gateway_api_key),
+) -> QueryResponse:
+    """Plain question-in, plain answer-out wrapper around /v1/chat/completions for the brain-core skill."""
+    trace_id = x_trace_id or str(uuid.uuid4())
+    trace_id_ctx.set(trace_id)
+    chat_request = ChatRequest(messages=[ChatMessage(role='user', content=request.question)], trace_id=trace_id)
+    chat_request, runtime_policy = policy_service.enforce_chat_policy(client_id, chat_request)
+    memory_context = memory_service.retrieve_context(client_id, chat_request.messages, user_id=None)
+    response = await orchestrator.run(chat_request, trace_id, runtime_policy, memory_context=memory_context)
+    memory_service.process_interaction(client_id, request.question, response.content, user_id=None)
+    metrics_registry.record_client_request(client_id, capability='query')
+    return QueryResponse(answer=response.content, trace_id=response.trace_id)
 
 
 @app.get('/metrics', response_model=MetricsResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})

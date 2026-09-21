@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     rate_limit_requests: int = 60
     rate_limit_window_seconds: int = 60
 
+    # Comma-separated list of origins allowed to call this API from a browser/webview
+    # (e.g. the domain hosting an AI Edge Gallery JS skill). '*' allows any origin.
+    allowed_origins: str = '*'
+
     groq_enabled: bool = False
     groq_api_key: str | None = None
     groq_model: str = 'llama-3.3-70b-versatile'

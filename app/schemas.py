@@ -250,3 +250,18 @@ class N8NWorkflowResponse(BaseModel):
     workflow_id: str
     status_code: int
     data: dict[str, Any] | list[Any] | str | None = None
+
+
+class StatusResponse(BaseModel):
+    status: Literal['ok', 'degraded']
+    app: str
+    env: str
+
+
+class QueryRequest(BaseModel):
+    question: str
+
+
+class QueryResponse(BaseModel):
+    answer: str
+    trace_id: str
