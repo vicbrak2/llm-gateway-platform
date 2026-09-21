@@ -27,6 +27,7 @@ from app.services.orchestrator import OrchestratorService
 from app.services.prompt_policy_service import PromptPolicyService
 from app.services.secrets import SecretResolver
 from app.services.usage_repository import UsageRepository
+from app.services import vault_search
 
 logger = logging.getLogger(__name__)
 redis_client: Redis | None = None
@@ -149,16 +150,35 @@ async def query(
     x_trace_id: str | None = Header(default=None),
     client_id: str = Depends(require_gateway_api_key),
 ) -> QueryResponse:
-    """Plain question-in, plain answer-out wrapper around /v1/chat/completions for the brain-core skill."""
+    """Plain question-in, plain answer-out wrapper around /v1/chat/completions for the brain-core skill.
+
+    Grounds the answer in the bundled vault (app/data/vault/**/*.md) when relevant
+    docs are found, instead of just asking the raw LLM providers.
+    """
     trace_id = x_trace_id or str(uuid.uuid4())
     trace_id_ctx.set(trace_id)
-    chat_request = ChatRequest(messages=[ChatMessage(role='user', content=request.question)], trace_id=trace_id)
+
+    vault_docs = vault_search.search(request.question)
+    messages = []
+    if vault_docs:
+        context_block = '\n\n---\n\n'.join(f'[fuente: {doc.path}]\n{doc.content}' for doc in vault_docs)
+        messages.append(ChatMessage(
+            role='system',
+            content=(
+                'Respondé la pregunta del usuario usando el siguiente contexto de la base de '
+                'conocimiento interna (vault) si es relevante. Si el contexto no cubre la pregunta, '
+                'decilo con claridad en vez de inventar una respuesta.\n\n' + context_block
+            ),
+        ))
+    messages.append(ChatMessage(role='user', content=request.question))
+
+    chat_request = ChatRequest(messages=messages, trace_id=trace_id)
     chat_request, runtime_policy = policy_service.enforce_chat_policy(client_id, chat_request)
     memory_context = memory_service.retrieve_context(client_id, chat_request.messages, user_id=None)
     response = await orchestrator.run(chat_request, trace_id, runtime_policy, memory_context=memory_context)
     memory_service.process_interaction(client_id, request.question, response.content, user_id=None)
     metrics_registry.record_client_request(client_id, capability='query')
-    return QueryResponse(answer=response.content, trace_id=response.trace_id)
+    return QueryResponse(answer=response.content, trace_id=response.trace_id, sources=[doc.path for doc in vault_docs])
 
 
 @app.get('/metrics', response_model=MetricsResponse, responses={401: {'model': ErrorResponse}, 429: {'model': ErrorResponse}})

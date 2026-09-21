@@ -265,3 +265,4 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     trace_id: str
+    sources: list[str] = Field(default_factory=list)
